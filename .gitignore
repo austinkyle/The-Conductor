@@ -1,0 +1,24 @@
+# secrets & local
+.env
+.env.local
+.env.*.local
+
+# staging
+/temp/
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.mypy_cache/
+.pytest_cache/
+
+# node / next
+node_modules/
+.next/
+dist/
+
+# os
+.DS_Store
+Thumbs.db
