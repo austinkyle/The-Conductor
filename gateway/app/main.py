@@ -8,11 +8,11 @@ from contextlib import asynccontextmanager
 import asyncpg
 import httpx
 import redis.asyncio as redis
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from core.config import get_settings
-from core.pipeline import proxy_chat_completion
+from core.pipeline import proxy_chat_completion, stream_chat_completion
 from translation.base import JSON
 
 
@@ -57,10 +57,21 @@ async def health() -> JSONResponse:
 
 
 @app.post("/v1/chat/completions")
-async def chat_completions(request: Request) -> JSONResponse:
-    """OpenAI-compatible chat completions. Forwards to the resolved provider and
-    returns the OpenAI-shaped response regardless of which provider served it."""
+async def chat_completions(request: Request) -> Response:
+    """OpenAI-compatible chat completions. Forwards to the resolved provider and returns
+    the OpenAI-shaped response — a JSON body, or an SSE stream when `stream` is set —
+    regardless of which provider served it."""
     body: JSON = await request.json()
+
+    if bool(body.get("stream")):
+        async def gen() -> AsyncIterator[bytes]:
+            # Hold a pooled connection for the stream's lifetime (Phase 4/5 write at close).
+            async with app.state.pool.acquire() as conn:
+                async for chunk in stream_chat_completion(conn, app.state.http, body):
+                    yield chunk
+
+        return StreamingResponse(gen(), media_type="text/event-stream")
+
     async with app.state.pool.acquire() as conn:
         result = await proxy_chat_completion(conn, app.state.http, body)
     return JSONResponse(content=result)

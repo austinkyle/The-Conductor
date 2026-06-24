@@ -2,13 +2,19 @@
 
 This interface is the one pre-justified abstraction in this layer (root CLAUDE.md).
 Each provider gets one Adapter that knows its endpoint path, auth header style, and
-request/response mapping. Stream methods are stubbed here and filled in Phase 2.
+request/response mapping. The stream methods translate the provider's SSE event stream
+into OpenAI `chat.completion.chunk` dicts; the engine (core/streaming.py) owns the SSE
+bytes, live forwarding, buffering, and usage reconciliation.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from core.streaming import SSEEvent
 
 # The OpenAI chat-completions payloads are open-shaped JSON; we map fields explicitly
 # rather than model every field, so a loose dict is the honest type at this boundary.
@@ -30,11 +36,14 @@ class Adapter(ABC):
     def from_provider_response(self, resp: JSON) -> JSON:
         """Provider response body -> OpenAI chat-completion response body."""
 
-    # --- streaming: implemented in Phase 2, declared now so the shape is fixed ---
+    # --- streaming ---
 
+    @abstractmethod
     def to_provider_stream_request(self, body: JSON) -> JSON:
-        raise NotImplementedError
+        """OpenAI request body -> provider request body with streaming enabled."""
 
-    def from_provider_stream(self, lines: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
-        """Provider SSE byte stream -> OpenAI-format SSE chunks."""
-        raise NotImplementedError
+    @abstractmethod
+    def from_provider_stream(
+        self, events: AsyncIterator[SSEEvent]
+    ) -> AsyncIterator[JSON]:
+        """Provider SSE events -> OpenAI `chat.completion.chunk` dicts."""

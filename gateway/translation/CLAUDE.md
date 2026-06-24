@@ -18,7 +18,11 @@ tradeoff: adoptability over purity.
 ## As built — adapter contract (Phase 1)
 - Each `Adapter` (base.py) owns its provider's `path`, `auth_headers(key)`, and request/response mapping. The pipeline only knows the provider's `base_url` (from the DB) + the adapter; it does not special-case providers.
 - `openai.py` is the identity transform — the public contract IS OpenAI shape.
-- Stream methods are stubbed (`NotImplementedError`); Phase 2 fills them.
+
+## As built — stream translation (Phase 2)
+- `to_provider_stream_request(body)` enables provider streaming; `from_provider_stream(events)` maps the provider's `SSEEvent` stream to OpenAI `chat.completion.chunk` dicts. The engine (`core/streaming.py`) owns SSE bytes, buffering, and usage reconciliation — adapters only translate events.
+- **OpenAI gotcha:** usage is omitted in stream mode unless the request sets `stream_options.include_usage: true`. The adapter always sets it, then passes chunks through unchanged (incl. the terminal `choices: []` + `usage` chunk).
+- **Anthropic event mapping:** `message_start` → first chunk `delta:{role:"assistant"}` and `usage.input_tokens` (prompt tokens); `content_block_delta`/`text_delta` → `delta:{content}`; `message_delta` → `stop_reason`→`finish_reason` (reuses `_FINISH_REASON`) + cumulative `usage.output_tokens`; `message_stop` → final `finish_reason` chunk + a synthesized terminal usage chunk in OpenAI shape. `ping`/`content_block_start|stop` are ignored. Input vs. output token counts arrive at *different* events — fold both into the close.
 
 ## Anthropic gotchas (Phase 1)
 - **`max_tokens` is required** by the Messages API; OpenAI treats it as optional. The adapter defaults to `DEFAULT_MAX_TOKENS` (1024) when the caller omits it.

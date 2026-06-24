@@ -105,14 +105,3 @@ async def test_identical_openai_response_from_both_providers() -> None:
     assert via_anthropic["object"] == "chat.completion"
     assert via_openai["usage"] == via_anthropic["usage"]
     assert via_openai["choices"] == via_anthropic["choices"]
-
-
-async def test_streaming_request_refused_until_phase_2() -> None:
-    transport = httpx.MockTransport(_handler)
-    async with httpx.AsyncClient(transport=transport) as http:
-        conn = cast(asyncpg.Connection, None)
-        with pytest.raises(Exception) as exc_info:
-            await pipeline.proxy_chat_completion(
-                conn, http, {"model": "gpt-4o-mini", "messages": [], "stream": True}
-            )
-    assert getattr(exc_info.value, "status_code", None) == 501

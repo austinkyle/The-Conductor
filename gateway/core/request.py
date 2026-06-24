@@ -22,6 +22,8 @@ class GatewayRequest:
     served_provider: str | None = None
     served_model: str | None = None
     usage: dict[str, int] = field(default_factory=dict)
+    # The streamed assistant text, assembled at stream close (Phase 4 persists it).
+    assembled_content: str | None = None
 
     @classmethod
     def from_body(cls, body: dict[str, object]) -> GatewayRequest:

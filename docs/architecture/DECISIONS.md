@@ -71,3 +71,21 @@ Why: Phase 2 (SSE) extends the shape rather than retrofitting it. Refusing strea
 Decision: a request's `model` is resolved directly against `models.alias` (alias = provider_model for now) via a join to `providers`; providers/models rows are seeded by an append-only migration (`002_seed_providers.sql`).
 Rejected: logical aliases + fallback chain (deferred to Phase 3); a config-file provider map (would bypass the providers/models tables and the secrets-by-reference path).
 Why: keeps key resolution flowing through `providers.auth_ref`, and seeding via the idempotent migration runner keeps provider data in tracked, append-only history alongside the schema.
+
+---
+
+## Phase 2 — SSE streaming + per-provider stream translation
+
+### Adapters yield OpenAI chunk dicts; the engine owns SSE bytes, buffering, reconciliation
+Decision: each adapter's `from_provider_stream` consumes parsed provider SSE events and yields OpenAI `chat.completion.chunk` *dicts*. The engine (`core/streaming.py`) serializes each to an SSE frame, forwards it live, buffers the assembled assistant text, and harvests `usage`. The commodity SSE parser (`iter_sse`) and encoder (`sse_encode`) live in the engine, shared by both adapters.
+Rejected: adapters that emit raw SSE bytes (would force the engine to re-parse to buffer/reconcile, duplicating JSON work and splitting the chunk shape across two layers); a usage side-channel out of the chunk stream.
+Why: provider stream-event translation is the judgment seam (root CLAUDE.md) and belongs in the adapter; the SSE plumbing is commodity and belongs in one place. With adapters speaking one normalized shape (OpenAI chunks), the engine stays fully provider-agnostic — content buffering and usage harvesting are written once.
+
+### Usage reconciliation at stream close, in-band as a terminal usage chunk
+Decision: both providers surface final token counts as a terminal OpenAI-shape usage chunk (`choices: []`, `usage: {...}`). OpenAI needs `stream_options.include_usage: true` on the request (it omits usage in stream mode otherwise); Anthropic carries `input_tokens` in `message_start` and the cumulative `output_tokens` + `stop_reason` in `message_delta`, which the adapter folds into a synthesized usage chunk on `message_stop`. The engine reads `usage` from whichever chunk carries it and stashes it on `GatewayRequest` (with the buffered `assembled_content`) at close.
+Why: counts only exist at the end of the stream. A single in-band, OpenAI-shaped usage chunk means the client sees standard behavior and the engine reconciles uniformly — no per-provider branching for the buffer-then-persist path Phase 4 (cache) and Phase 5 (budgets) build on.
+
+### Buffer-then-persist; failover only before the first token (restates ADR-002)
+Decision: the assembled response is buffered as it streams so Phase 4 can persist/cache it. A streaming upstream error can only surface to the client *before the first token* — the status check sits at stream open (`http.stream` → `aread()` on `>=400` → `HTTPException`); once chunks have begun there is no mid-stream failover. The pooled DB connection is held for the generator's lifetime, forward-compatible with Phase 4/5 close-time writes.
+Rejected: pretending a mid-stream provider failure can be cleanly retried elsewhere.
+Why: once the client holds partial output, retrying on another provider produces a corrupt stream. Honesty about this edge (ADR-002) is the signal; the buffer is what makes close-time persistence and synthetic cache replay possible later.

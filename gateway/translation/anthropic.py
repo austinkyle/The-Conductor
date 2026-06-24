@@ -13,9 +13,15 @@ a default when the caller omits it.
 
 from __future__ import annotations
 
+import json
 import time
+from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING
 
 from translation.base import JSON, Adapter
+
+if TYPE_CHECKING:
+    from core.streaming import SSEEvent
 
 ANTHROPIC_VERSION = "2023-06-01"
 DEFAULT_MAX_TOKENS = 1024
@@ -127,3 +133,77 @@ class AnthropicAdapter(Adapter):
                 "total_tokens": prompt_tokens + completion_tokens,
             },
         }
+
+    # --- streaming: Anthropic Messages SSE events -> OpenAI chat.completion.chunk dicts.
+    # Input tokens arrive in `message_start`; output tokens + stop_reason in `message_delta`;
+    # we emit a terminal usage chunk on `message_stop` so the engine reconciles uniformly. ---
+
+    def to_provider_stream_request(self, body: JSON) -> JSON:
+        return {**self.to_provider_request(body), "stream": True}
+
+    async def from_provider_stream(
+        self, events: AsyncIterator[SSEEvent]
+    ) -> AsyncIterator[JSON]:
+        msg_id = ""
+        model: object = None
+        prompt_tokens = 0
+        completion_tokens = 0
+        finish_reason = "stop"
+
+        def chunk(delta: JSON, finish: str | None) -> JSON:
+            return {
+                "id": msg_id,
+                "object": "chat.completion.chunk",
+                "created": int(time.time()),
+                "model": model,
+                "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
+            }
+
+        async for event in events:
+            data = json.loads(event.data)
+            if not isinstance(data, dict):
+                continue
+            etype = data.get("type")
+
+            if etype == "message_start":
+                message = data.get("message")
+                if isinstance(message, dict):
+                    mid = message.get("id")
+                    msg_id = mid if isinstance(mid, str) else ""
+                    model = message.get("model")
+                    usage = message.get("usage")
+                    if isinstance(usage, dict):
+                        prompt_tokens = _as_int(usage.get("input_tokens"))
+                yield chunk({"role": "assistant"}, None)
+
+            elif etype == "content_block_delta":
+                delta = data.get("delta")
+                if isinstance(delta, dict) and delta.get("type") == "text_delta":
+                    text = delta.get("text")
+                    if isinstance(text, str):
+                        yield chunk({"content": text}, None)
+
+            elif etype == "message_delta":
+                delta = data.get("delta")
+                if isinstance(delta, dict):
+                    stop_reason = delta.get("stop_reason")
+                    if isinstance(stop_reason, str):
+                        finish_reason = _FINISH_REASON.get(stop_reason, "stop")
+                usage = data.get("usage")
+                if isinstance(usage, dict):
+                    completion_tokens = _as_int(usage.get("output_tokens"))
+
+            elif etype == "message_stop":
+                yield chunk({}, finish_reason)
+                yield {
+                    "id": msg_id,
+                    "object": "chat.completion.chunk",
+                    "created": int(time.time()),
+                    "model": model,
+                    "choices": [],
+                    "usage": {
+                        "prompt_tokens": prompt_tokens,
+                        "completion_tokens": completion_tokens,
+                        "total_tokens": prompt_tokens + completion_tokens,
+                    },
+                }
