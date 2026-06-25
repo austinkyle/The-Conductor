@@ -27,7 +27,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["app", "core", "db", "translation"]
+packages = ["app", "budgets", "cache", "core", "db", "observability", "routing", "translation"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -37,7 +37,7 @@ testpaths = ["tests"]
 python_version = "3.11"
 strict = true
 mypy_path = "."
-files = ["app", "core", "db", "translation", "tests"]
+files = ["app", "budgets", "cache", "core", "db", "observability", "routing", "translation", "tests"]
 # asyncpg/redis ship partial types; don't fail the build on their internals.
 [[tool.mypy.overrides]]
 module = ["pgvector.*"]

@@ -9,11 +9,13 @@ import asyncpg
 import httpx
 import redis.asyncio as redis
 from fastapi import FastAPI, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from core.auth import resolve_api_key
 from core.config import get_settings
 from core.pipeline import proxy_chat_completion, stream_chat_completion
+from observability.api import router as obs_router
 from translation.base import JSON
 
 
@@ -38,6 +40,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="LLM Gateway", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
+)
+app.include_router(obs_router)
 
 
 @app.get("/health")

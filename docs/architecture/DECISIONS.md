@@ -184,3 +184,32 @@ Why: `0` is the accurate cost for a cached response. NULL would conflate "we don
 Decision: `latency_ms = int((time.monotonic() - t0) * 1000)` where `t0` is set at the top of `proxy_chat_completion` / `stream_chat_completion`. For the streaming path, `t0` to chain resolution (pre-first-token) is written; the total stream duration is not persisted.
 Rejected: measuring from the HTTP server (adds framework overhead noise); measuring end-to-end stream duration (requires holding state across the async generator, complicates the close-time update path).
 Why: chain-resolution latency is the decision-quality metric — how long does the gateway take to pick a provider and start forwarding? Total stream duration is dominated by the provider's generation speed, which the gateway cannot control. Both are useful but chain-resolution latency is the gateway's own performance signal.
+
+---
+
+## Phase 5B — Dashboard: observability read API + Next.js UI
+
+### Read-only APIRouter on the same FastAPI app, no new service
+Decision: six `GET /v1/observability/*` endpoints live in `observability/api.py` and are mounted via `app.include_router(obs_router)` on the existing FastAPI app.
+Rejected: a separate dashboard backend service; embedding the queries in the frontend via a Next.js API route.
+Why: a second service (its own port, Docker container, deploy lifecycle) is overhead for pure read queries. Embedding DB logic in Next.js API routes couples the frontend directly to the DB, breaking the `requests` table as the single-source spine. Mounting on the existing app keeps the contract clear: everything the dashboard shows is derived from the `requests` spine the gateway already writes.
+
+### Six focused query functions, raw asyncpg — no ORM abstraction
+Decision: each endpoint has one SQL function in `queries.py` that returns raw `asyncpg.Record` objects, converted to Pydantic models in the endpoint handler.
+Rejected: a generic query builder; wrapping in a repository class.
+Why: the queries are each structurally distinct (aggregation, percentile, join-with-CTE, filter). A shared abstraction would either be parameterized to the point of illegibility or would just duplicate the SQL inside a wrapper. Raw asyncpg + explicit column access is readable, testable in isolation, and consistent with the rest of the gateway.
+
+### `bucket` injected as an f-string literal, not a SQL parameter
+Decision: `date_trunc('{bucket}', ...)` is built with a Python f-string after validating `bucket` against `frozenset({"hour", "day"})`.
+Rejected: passing `bucket` as a `$N` parameter (Postgres does not support runtime identifiers as `date_trunc` granularity arguments).
+Why: SQL does not support bind parameters for string-constant positions like `date_trunc`'s first argument. The allowlist validation before the f-string (`assert bucket in _BUCKETS`) is the safe equivalent of parameterization — the value is proven to be one of two known-safe literals before injection.
+
+### CORSMiddleware with `allow_origins=["*"]` in dev
+Decision: `CORSMiddleware` is added to the FastAPI app with `allow_origins=["*"]` so the browser dashboard on `:3000` can fetch the gateway on `:8000`.
+Rejected: proxying gateway calls through the Next.js server (`/api/*` rewrites).
+Why: a Next.js proxy adds a round-trip for every chart data fetch. The gateway read endpoints are unauthenticated read-only analytics — `allow_origins=["*"]` is appropriate scope. A production deploy (same origin or behind a reverse proxy) would restrict origins to the dashboard domain.
+
+### Recharts v3 for the dashboard; no CSS framework
+Decision: recharts AreaChart (spend), BarChart (latency), plain `<table>` for failovers and keys. Inline styles only.
+Rejected: chart.js, d3, a CSS framework (Tailwind / MUI).
+Why: recharts is the most widely-used declarative React chart library and ships good TypeScript types. A CSS framework is unnecessary scope for a single-page analytics dashboard. Inline styles keep the component files self-contained with no build configuration.
