@@ -213,3 +213,67 @@ Why: a Next.js proxy adds a round-trip for every chart data fetch. The gateway r
 Decision: recharts AreaChart (spend), BarChart (latency), plain `<table>` for failovers and keys. Inline styles only.
 Rejected: chart.js, d3, a CSS framework (Tailwind / MUI).
 Why: recharts is the most widely-used declarative React chart library and ships good TypeScript types. A CSS framework is unnecessary scope for a single-page analytics dashboard. Inline styles keep the component files self-contained with no build configuration.
+
+---
+
+## Phase 5C — Benchmark harness
+
+Four standalone asyncio scripts in `bench/` measure gateway overhead, cache hit rate,
+failover reliability, and throughput saturation. All reports go to `bench/reports/`.
+
+### Measured similarity threshold: 0.92 (placeholder — similarity mode requires OPENAI_API_KEY)
+Decision: `SEMANTIC_SIMILARITY_THRESHOLD` remains at 0.92 pending `--mode=similarity` run.
+The `bench/cache_bench.py --mode=similarity` mode calls the OpenAI embedding API to sweep
+thresholds 0.80–0.99 and report precision/recall over the paraphrase corpus. That mode
+requires a live `OPENAI_API_KEY`; it was not run in the CI/local bench session that produced
+the headline numbers. The threshold sensitivity sweep should be run before production use.
+Evidence (pending): `bench/reports/bench-YYYYMMDD-cache-similarity.md` — threshold sensitivity table.
+
+### Benchmark design decisions
+
+#### asyncio.start_server mock provider instead of a real upstream
+Decision: all four bench scripts use a minimal `asyncio.start_server` HTTP/1.1 mock that
+returns a canned OpenAI response instantly (bench/_mock_server.py). Binds to 0.0.0.0 so
+the Docker gateway can reach it via `host.docker.internal`.
+Rejected: using a real provider (OpenAI/Anthropic) for the overhead and throughput benches;
+using aiohttp or a third-party mock framework.
+Why: real provider latency (50–500 ms) dominates and obscures the sub-millisecond gateway
+overhead we want to measure. A canned response eliminates that noise. asyncio.start_server
+is stdlib — no dependency. host.docker.internal is the idiomatic macOS bridge between
+host-bound bench processes and Docker containers.
+
+#### Sequential bench for overhead; semaphore-bounded gather for throughput
+Decision: overhead.py uses 500 sequential requests; throughput.py sweeps concurrency levels
+[1,2,5,10,20,40,60,100] with asyncio.Semaphore.
+Rejected: using Locust (external dependency) or concurrent tasks for the overhead bench.
+Why: overhead is an additive latency measurement — concurrent requests would conflate
+gateway processing with scheduling artifacts. Sequential gives the cleanest p50/p95/p99.
+Throughput needs concurrency to find the saturation point; the semaphore bound makes the
+curve reproducible.
+
+#### Hard-coded paraphrase corpus (not generated at runtime)
+Decision: cache_bench.py embeds a 50-question × 3-variant corpus as a Python literal.
+Rejected: generating paraphrases via an LLM at bench runtime.
+Why: reproducibility. A runtime-generated corpus changes every run, making threshold
+comparisons meaningless across runs. The hard-coded corpus is the reproducible ground truth.
+
+#### Two bench modes for cache: gateway vs. similarity
+Decision: `--mode=gateway` sends requests through the live gateway and reads `cache_status`
+from the requests table. `--mode=similarity` calls the embedding API directly and computes
+cosine similarities against multiple thresholds — no gateway needed.
+Rejected: patching the gateway's `lru_cache`-backed settings for each threshold (invasive
+and requires process restart); running a full docker-compose sweep per threshold (slow).
+Why: the two modes test different things. Gateway mode validates that the configured
+threshold produces the expected hit rate under a realistic corpus. Similarity mode
+independently quantifies the threshold sensitivity curve without touching the gateway,
+so you can pick a threshold and then validate it in gateway mode.
+
+### Headline benchmark numbers
+Run `python bench/overhead.py`, `bench/cache_bench.py`, `bench/failover_bench.py`,
+and `bench/throughput.py` to populate these. Update this section with actual values.
+
+- Gateway overhead: 2.3 ms p50, 2.8 ms p95 added latency over direct provider call (Apple M1 Pro; direct p50=0.6 ms, gateway p50=2.9 ms)
+- Cache hit rate: 25.0% under the bench corpus at threshold 0.92 (50/200: 50 exact hits, 0 semantic hits — semantic cache skipped, OPENAI_API_KEY not set in bench run)
+- Cost reduction: 25% of would-be spend avoided by exact-cache hits (50 of 200 requests served from Redis with cost_cents=0)
+- Failover: 100% of requests succeed when primary provider returns 503; p50 gateway latency at depth=1 = 1 ms (FALLBACK_BACKOFF_BASE_MS=0; with default 500 ms backoff add ~500 ms per fallover depth)
+- Throughput saturation: ~5 concurrent requests at peak linear efficiency; plateau at ~730 RPS (single uvicorn worker); latency p95 crosses 2× baseline at concurrency=10
