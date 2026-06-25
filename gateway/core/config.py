@@ -20,11 +20,17 @@ class Settings(BaseSettings):
     database_url: str
     redis_url: str
 
+    # Exact cache — TTL for Redis entries (seconds).
+    exact_cache_ttl_seconds: int = 3600
+
     # Semantic cache — non-secret, overridable defaults. The embedding model is a
     # default, not a hardcoded contract; routing model strings live in the DB.
     embedding_model: str = "text-embedding-3-small"
+    embedding_api_base: str = "https://api.openai.com/v1"
     semantic_similarity_threshold: float = 0.92
     semantic_temperature_bypass: float = 0.3
+    # Minimum characters in embed_text output to bother calling the embedding API.
+    semantic_cache_min_chars: int = 1
 
     # App
     gateway_host: str = "0.0.0.0"

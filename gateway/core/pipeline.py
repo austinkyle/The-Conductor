@@ -236,7 +236,11 @@ async def proxy_chat_completion(
 
         text = semantic.embed_text(body)
         if len(text) >= s.semantic_cache_min_chars:
-            embedding = await semantic.embed(http, text)
+            try:
+                embedding = await semantic.embed(http, text)
+            except Exception:
+                pass  # embedding service unavailable — treat as miss, proceed
+        if embedding is not None:
             cached_sem = await semantic.lookup(
                 conn,
                 embedding,
@@ -380,7 +384,11 @@ async def stream_chat_completion(
 
         text = semantic.embed_text(body)
         if len(text) >= s.semantic_cache_min_chars:
-            embedding = await semantic.embed(http, text)
+            try:
+                embedding = await semantic.embed(http, text)
+            except Exception:
+                pass  # embedding service unavailable — treat as miss, proceed
+        if embedding is not None:
             cached_sem = await semantic.lookup(
                 conn,
                 embedding,
