@@ -11,15 +11,22 @@ import redis.asyncio as redis
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from core.auth import resolve_api_key
 from core.config import get_settings
 from core.pipeline import proxy_chat_completion, stream_chat_completion
 from translation.base import JSON
 
 
+async def _init_pool_conn(conn: asyncpg.Connection) -> None:
+    """Register pgvector codec on each new pool connection so list[float] ↔ vector round-trips work."""
+    import pgvector.asyncpg
+    await pgvector.asyncpg.register_vector(conn)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
-    app.state.pool = await asyncpg.create_pool(settings.database_url)
+    app.state.pool = await asyncpg.create_pool(settings.database_url, init=_init_pool_conn)
     app.state.redis = redis.from_url(settings.redis_url)
     app.state.http = httpx.AsyncClient(timeout=httpx.Timeout(60.0))
     try:
@@ -62,16 +69,23 @@ async def chat_completions(request: Request) -> Response:
     the OpenAI-shaped response — a JSON body, or an SSE stream when `stream` is set —
     regardless of which provider served it."""
     body: JSON = await request.json()
+    authorization = request.headers.get("authorization")
 
     if bool(body.get("stream")):
         async def gen() -> AsyncIterator[bytes]:
-            # Hold a pooled connection for the stream's lifetime (Phase 4/5 write at close).
+            # Hold a pooled connection for the stream's lifetime (write at open + close).
             async with app.state.pool.acquire() as conn:
-                async for chunk in stream_chat_completion(conn, app.state.http, body):
+                api_key = await resolve_api_key(conn, authorization)
+                async for chunk in stream_chat_completion(
+                    conn, app.state.http, app.state.redis, body, key=api_key
+                ):
                     yield chunk
 
         return StreamingResponse(gen(), media_type="text/event-stream")
 
     async with app.state.pool.acquire() as conn:
-        result = await proxy_chat_completion(conn, app.state.http, body)
+        api_key = await resolve_api_key(conn, authorization)
+        result = await proxy_chat_completion(
+            conn, app.state.http, app.state.redis, body, key=api_key
+        )
     return JSONResponse(content=result)

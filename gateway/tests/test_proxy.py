@@ -16,6 +16,7 @@ import httpx
 import pytest
 
 from core import pipeline
+from core.config import get_settings
 from db.models import Model, Provider
 from translation.base import JSON
 
@@ -77,9 +78,10 @@ def _content(resp: JSON) -> str:
 async def _proxy(model: str) -> JSON:
     transport = httpx.MockTransport(_handler)
     async with httpx.AsyncClient(transport=transport) as http:
-        conn = cast(asyncpg.Connection, None)  # _resolve stub ignores the connection
+        conn = cast(asyncpg.Connection, None)
+        r = cast(object, None)  # bypass forced; redis never accessed
         return await pipeline.proxy_chat_completion(
-            conn, http, {"model": model, "messages": [{"role": "user", "content": "Hi"}]}
+            conn, http, r, {"model": model, "messages": [{"role": "user", "content": "Hi"}]}  # type: ignore[arg-type]
         )
 
 
@@ -87,11 +89,20 @@ async def _proxy(model: str) -> JSON:
 def _env_and_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://localhost/test")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost")
+    get_settings.cache_clear()
 
-    async def fake_resolve(conn: object, model: str) -> tuple[Model, Provider]:
-        return _resolve(model)
+    async def fake_resolve_chain(conn: object, model: str) -> list[tuple[Model, Provider]]:
+        return [_resolve(model)]
 
-    monkeypatch.setattr(pipeline, "resolve_model", fake_resolve)
+    async def fake_insert_request(conn: object, **kwargs: object) -> int:
+        return 1
+
+    monkeypatch.setattr(pipeline, "resolve_chain", fake_resolve_chain)
+    monkeypatch.setattr(pipeline, "insert_request", fake_insert_request)
+    # Force bypass so existing tests need no redis/embed infrastructure.
+    monkeypatch.setattr(pipeline, "should_bypass", lambda body, temperature_bypass=0.3: "skip_cache")
 
 
 async def test_identical_openai_response_from_both_providers() -> None:

@@ -18,6 +18,7 @@ import httpx
 import pytest
 
 from core import pipeline, streaming
+from core.config import get_settings
 from core.request import GatewayRequest
 from core.streaming import SSEEvent
 from db.models import Model, Provider
@@ -156,11 +157,23 @@ def _handler(request: httpx.Request) -> httpx.Response:
 def _env_and_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://localhost/test")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost")
+    get_settings.cache_clear()
 
-    async def fake_resolve(conn: object, model: str) -> tuple[Model, Provider]:
-        return _resolve(model)
+    async def fake_resolve_chain(conn: object, model: str) -> list[tuple[Model, Provider]]:
+        return [_resolve(model)]
 
-    monkeypatch.setattr(pipeline, "resolve_model", fake_resolve)
+    async def fake_insert_request(conn: object, **kwargs: object) -> int:
+        return 1
+
+    async def fake_update_request_usage(conn: object, **kwargs: object) -> None:
+        pass
+
+    monkeypatch.setattr(pipeline, "resolve_chain", fake_resolve_chain)
+    monkeypatch.setattr(pipeline, "insert_request", fake_insert_request)
+    monkeypatch.setattr(pipeline, "update_request_usage", fake_update_request_usage)
+    monkeypatch.setattr(pipeline, "should_bypass", lambda body, temperature_bypass=0.3: "skip_cache")
 
 
 def _parse_data_chunks(frames: list[bytes]) -> list[JSON]:
@@ -178,11 +191,11 @@ def _parse_data_chunks(frames: list[bytes]) -> list[JSON]:
 async def _stream(model: str) -> list[bytes]:
     transport = httpx.MockTransport(_handler)
     async with httpx.AsyncClient(transport=transport) as http:
-        conn = cast(asyncpg.Connection, None)  # fake_resolve ignores the connection
+        conn = cast(asyncpg.Connection, None)
         return [
             frame
             async for frame in pipeline.stream_chat_completion(
-                conn, http, {"model": model, "messages": [{"role": "user", "content": "Hi"}], "stream": True}
+                conn, http, None, {"model": model, "messages": [{"role": "user", "content": "Hi"}], "stream": True}  # type: ignore[arg-type]
             )
         ]
 
