@@ -79,13 +79,13 @@ async def _resolve(conn: asyncpg.Connection, req: GatewayRequest) -> list[tuple[
 
 def _candidate_setup(a: Attempt, body: JSON) -> tuple[Adapter, str, JSON]:
     """Per-candidate adapter + key + outbound body. Raises terminal ProviderError on misconfig."""
-    adapter = _ADAPTERS.get(a.provider.name)
+    adapter = _ADAPTERS.get(a.provider.api_format)
     if adapter is None:
         raise ProviderError(
             label="config",
             retryable=False,
             status=500,
-            detail=f"no adapter for provider: {a.provider.name}",
+            detail=f"no adapter for api_format: {a.provider.api_format}",
             depth=a.depth,
             provider_id=a.provider.id,
             served_model=a.model.provider_model,

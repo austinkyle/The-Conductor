@@ -18,3 +18,14 @@ Secrets are referenced (auth_ref / env), never stored in plaintext.
 - `migrate.py` tracks applied files in `schema_migrations`; idempotent re-runs.
 - `semantic_cache.embedding` is `vector(1536)` (default OpenAI embedding dim); `response_body` is `jsonb`.
 - Prices in `models` are USD per 1,000,000 tokens.
+
+## Phase 3 additions (003_routes)
+- `models.priority int NOT NULL DEFAULT 0` — lower value = higher priority in the fallback chain.
+- `db/models.py`: `Model.priority: int = 0` added as the last field (default preserves existing positional constructors).
+- `db/queries.py`: `resolve_model` replaced by `insert_request`; chain resolution lives in `routing/aliases.py`.
+- `requests` write path: `insert_request` writes `requested_model`, `served_provider_id`, `served_model`, `status`, `error_class`, `fallback_depth` on every request (success and error). Remaining columns (tokens, cost, cache_status, latency) are filled in Phase 4/5.
+
+## Phase 4 additions (004_semantic_cache_index)
+- `HNSW cosine index` on `semantic_cache.embedding` — makes ANN cosine search sub-linear at scale.
+- `btree index` on `semantic_cache.request_hash` — accelerates `ON CONFLICT (request_hash) DO NOTHING` in store().
+- `insert_request` gains `cache_status text | None` — written as `"exact_hit"`, `"semantic_hit"`, or `"miss"` on every request row.

@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     # Minimum characters in embed_text output to bother calling the embedding API.
     semantic_cache_min_chars: int = 1
 
+    # Failover backoff — non-secret, overridable defaults.
+    fallback_backoff_base_ms: int = 500
+    fallback_backoff_factor: float = 1.8
+    fallback_backoff_max_ms: int = 30_000
+
     # App
     gateway_host: str = "0.0.0.0"
     gateway_port: int = 8000

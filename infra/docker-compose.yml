@@ -35,6 +35,9 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      FALLBACK_BACKOFF_BASE_MS: ${FALLBACK_BACKOFF_BASE_MS:-500}
+      # Dummy key for local mock providers used by bench scripts — never a real secret.
+      BENCH_MOCK_KEY: bench-dummy-000
     ports:
       - "8000:8000"
     depends_on:

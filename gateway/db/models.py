@@ -27,6 +27,7 @@ class Provider:
     name: str
     base_url: str
     auth_ref: str
+    api_format: str
     created_at: datetime
 
 
@@ -39,6 +40,7 @@ class Model:
     input_price_per_mtok: Decimal | None
     output_price_per_mtok: Decimal | None
     created_at: datetime
+    priority: int = 0
 
 
 @dataclass(frozen=True)
