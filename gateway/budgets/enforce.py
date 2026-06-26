@@ -95,7 +95,7 @@ async def record_spend(
     """Increment the monthly Redis spend counter by cents (numeric string, 4dp)."""
     now = datetime.now(timezone.utc)
     key = _counter_key(api_key_id, now)
-    # INCRBYFLOAT keeps precision; set TTL on first write only.
+    # INCRBYFLOAT keeps precision; creates the key at 0 if missing.
     await r.incrbyfloat(key, float(cents))
-    # nx=True: only set TTL if the key was just created (or was missing).
+    # Refresh the ~35-day TTL on every write (rolling window covering month boundaries).
     await r.expire(key, _TTL_SECONDS)
