@@ -28,6 +28,21 @@ Decision: async FastAPI.
 Rejected: Go/Rust for "infra flex."
 Why: a clean, well-tested async implementation in the stack you operate beats shaky code in a language you don't. Port the hot path to Go later as a victory lap, not the build.
 
+## ADR-005 — jsonb round-trip via asyncpg codec, not per-call-site json.dumps/loads
+Decision: register a `jsonb` codec (`encoder=json.dumps, decoder=json.loads`) in `_init_pool_conn` (`app/main.py`), alongside the existing pgvector codec.
+Rejected: `json.dumps()` at `semantic.store()`'s call site + `json.loads()` at `semantic.lookup()`'s call site.
+Why: asyncpg has no built-in `dict <-> jsonb` conversion, so `semantic.store()` was passing a raw dict into a jsonb bind parameter and raising `DataError` on every cache write — after billing had already completed (BLOCKER 3.4, always a 500 on cache miss). A pool-level codec keeps `lookup()`'s existing `cast(JSON, row["response_body"])` valid with no call-site changes, symmetric with how the vector codec is already handled. Also wrapped both `semantic.store()` call sites (streaming and non-streaming) in `try/except Exception: pass` — a cache write must never fail an already-billed client response, mirroring the existing guard around `semantic.embed()`.
+
+## ADR-006 — semantic_cache.request_hash needs a UNIQUE index, not a plain btree
+Decision: added migration `007_semantic_cache_unique_hash.sql` replacing the plain btree index from `004_semantic_cache_index.sql` with a unique one (de-duplicating existing rows first).
+Rejected: leaving 004's index as-is.
+Why: `store()`'s `ON CONFLICT (request_hash) DO NOTHING` requires a unique constraint/index on the conflict target — a non-unique btree doesn't satisfy that, so every `store()` call was raising `InvalidColumnReferenceError`, discovered while verifying the ADR-005 fix against a real Postgres. Without this, the ADR-005 try/except would have silently swallowed a 100%-failure-rate cache write instead of actually fixing caching.
+
+## ADR-007 — strip `cache` (and other volatile keys) before forwarding upstream
+Decision: filter `body` through the existing `cache.exact._VOLATILE_KEYS` set (`stream`, `stream_options`, `cache`) in `pipeline._candidate_setup` before assembling the outbound request, instead of spreading the raw caller body.
+Rejected: leaving the OpenAI adapter's pass-through as the only line of defense.
+Why: `_candidate_setup` built `out_body` via `{**body, "model": ...}`, forwarding the gateway-only `cache` control field verbatim to real providers (BLOCKER 3.5). The OpenAI adapter's `to_provider_request` is a pure identity pass-through, so this leaked as an unrecognized field on the wire; Anthropic's adapter happened to mask it by rebuilding the request field-by-field. Fixing the shared `_candidate_setup` choke point (used by both streaming and non-streaming attempts) closes the leak for both adapters rather than relying on one adapter's incidental behavior. Confirmed safe to also strip `stream`/`stream_options` here since `to_provider_stream_request` re-sets both unconditionally.
+
 ---
 
 ## Phase 0 — skeleton (config, 5-table model, migrations, compose)

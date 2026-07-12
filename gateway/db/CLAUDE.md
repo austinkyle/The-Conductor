@@ -27,5 +27,7 @@ Secrets are referenced (auth_ref / env), never stored in plaintext.
 
 ## Phase 4 additions (004_semantic_cache_index)
 - `HNSW cosine index` on `semantic_cache.embedding` — makes ANN cosine search sub-linear at scale.
-- `btree index` on `semantic_cache.request_hash` — accelerates `ON CONFLICT (request_hash) DO NOTHING` in store().
 - `insert_request` gains `cache_status text | None` — written as `"exact_hit"`, `"semantic_hit"`, or `"miss"` on every request row.
+
+## Post-launch fix (007_semantic_cache_unique_hash)
+- 004's `request_hash` index was a plain btree, which does NOT satisfy `ON CONFLICT (request_hash) DO NOTHING` in `store()` — Postgres requires a unique index/constraint on the conflict target. 007 replaces it with a `UNIQUE INDEX` (de-duping existing rows first). See ADR-006.

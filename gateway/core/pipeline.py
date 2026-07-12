@@ -27,6 +27,7 @@ from fastapi import HTTPException
 from budgets.accounting import cost_cents
 from budgets.enforce import check_budget, record_spend
 from cache import exact, semantic
+from cache.exact import _VOLATILE_KEYS
 from cache.guardrails import should_bypass
 from cache.replay import assembled_to_response, synthetic_stream
 from core import streaming
@@ -101,7 +102,9 @@ def _candidate_setup(a: Attempt, body: JSON) -> tuple[Adapter, str, JSON]:
             provider_id=a.provider.id,
             served_model=a.model.provider_model,
         )
-    out_body: JSON = {**body, "model": a.model.provider_model}
+    out_body: JSON = {k: v for k, v in body.items() if k not in _VOLATILE_KEYS} | {
+        "model": a.model.provider_model
+    }
     return adapter, key, out_body
 
 
@@ -318,13 +321,16 @@ async def proxy_chat_completion(
     if not bypass:
         await exact.put(r, h, result, s.exact_cache_ttl_seconds)
         if embedding is not None:
-            await semantic.store(
-                conn,
-                request_hash=h,
-                embedding=embedding,
-                response=result,
-                requested_model=req.model,
-            )
+            try:
+                await semantic.store(
+                    conn,
+                    request_hash=h,
+                    embedding=embedding,
+                    response=result,
+                    requested_model=req.model,
+                )
+            except Exception:
+                pass  # cache write is best-effort — must never fail an already-billed response
 
     return result
 
@@ -486,10 +492,13 @@ async def stream_chat_completion(
         response = assembled_to_response(req, req.model)
         await exact.put(r, h, response, s.exact_cache_ttl_seconds)
         if embedding is not None:
-            await semantic.store(
-                conn,
-                request_hash=h,
-                embedding=embedding,
-                response=response,
-                requested_model=req.model,
-            )
+            try:
+                await semantic.store(
+                    conn,
+                    request_hash=h,
+                    embedding=embedding,
+                    response=response,
+                    requested_model=req.model,
+                )
+            except Exception:
+                pass  # cache write is best-effort — must never fail an already-billed response

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -20,9 +21,13 @@ from translation.base import JSON
 
 
 async def _init_pool_conn(conn: asyncpg.Connection) -> None:
-    """Register pgvector codec on each new pool connection so list[float] ↔ vector round-trips work."""
+    """Register pgvector + jsonb codecs on each new pool connection so list[float] <-> vector
+    and dict <-> jsonb round-trip without call-site (de)serialization."""
     import pgvector.asyncpg
     await pgvector.asyncpg.register_vector(conn)
+    await conn.set_type_codec(
+        "jsonb", encoder=json.dumps, decoder=json.loads, schema="pg_catalog", format="text"
+    )
 
 
 @asynccontextmanager

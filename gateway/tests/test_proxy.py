@@ -7,6 +7,7 @@ regardless of which provider served the request. Uses httpx's built-in MockTrans
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import cast
@@ -116,3 +117,32 @@ async def test_identical_openai_response_from_both_providers() -> None:
     assert via_anthropic["object"] == "chat.completion"
     assert via_openai["usage"] == via_anthropic["usage"]
     assert via_openai["choices"] == via_anthropic["choices"]
+
+
+async def test_cache_control_key_not_forwarded_upstream() -> None:
+    """The `cache` control field is for the gateway only — it must never reach the
+    upstream provider. The OpenAI adapter is a pass-through, so this is the one path
+    where a leak would actually be visible on the wire."""
+    captured: list[JSON] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(cast(JSON, json.loads(request.content)))
+        return httpx.Response(200, json=_OPENAI_UPSTREAM)
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as http:
+        conn = cast(asyncpg.Connection, None)
+        r = cast(object, None)  # bypass forced; redis never accessed
+        await pipeline.proxy_chat_completion(
+            conn,
+            http,
+            r,  # type: ignore[arg-type]
+            {
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "user", "content": "Hi"}],
+                "cache": {"no_cache": True},
+            },
+        )
+
+    assert len(captured) == 1
+    assert "cache" not in captured[0]
