@@ -28,6 +28,21 @@ print(client.chat.completions.create(model="gpt-4o-mini", messages=[{"role":"use
 
 ---
 
+## Customer Guide
+
+New to The Conductor and want the full picture — cache behavior, failover
+semantics, budget enforcement, dashboard endpoints, self-host steps, security
+model, known limits, and troubleshooting — in one document?
+
+📄 **[The Conductor — Customer Usage Guide (PDF)](docs/The-Conductor-Customer-Guide.pdf)**
+
+It's written for API consumers (not contributors): what happens on a cache
+hit vs. miss, what a failover response looks like, how the per-key spend cap
+behaves once you hit it, how to read the six `/v1/observability/*` endpoints,
+and the copy-paste steps to self-host via Docker Compose or Fly.io.
+
+---
+
 ## Architecture Decisions
 
 These are the four decisions that shaped the design. Each one had a real alternative — the choice is the argument.
