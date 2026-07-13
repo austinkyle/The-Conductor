@@ -29,7 +29,7 @@ export default function MotionCard({ children, index = 0, style, className }: Pr
       whileHover={
         reduceMotion
           ? undefined
-          : { y: -1, borderColor: "#34344a", transition: { duration: 0.15 } }
+          : { y: -1, borderColor: "var(--border-hover)", transition: { duration: 0.15 } }
       }
     >
       {children}
