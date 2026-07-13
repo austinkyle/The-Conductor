@@ -11,6 +11,20 @@ jobs:
     defaults:
       run:
         working-directory: gateway
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -22,7 +36,7 @@ jobs:
         env:
           OPENAI_API_KEY: sk-test
           ANTHROPIC_API_KEY: sk-ant-test
-          DATABASE_URL: postgresql://localhost/test
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test
           REDIS_URL: redis://localhost
         run: pytest
       - name: mypy
