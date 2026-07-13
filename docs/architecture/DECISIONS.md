@@ -241,13 +241,10 @@ Why: recharts is the most widely-used declarative React chart library and ships 
 Four standalone asyncio scripts in `bench/` measure gateway overhead, cache hit rate,
 failover reliability, and throughput saturation. All reports go to `bench/reports/`.
 
-### Measured similarity threshold: 0.92 (placeholder — similarity mode requires OPENAI_API_KEY)
-Decision: `SEMANTIC_SIMILARITY_THRESHOLD` remains at 0.92 pending `--mode=similarity` run.
-The `bench/cache_bench.py --mode=similarity` mode calls the OpenAI embedding API to sweep
-thresholds 0.80–0.99 and report precision/recall over the paraphrase corpus. That mode
-requires a live `OPENAI_API_KEY`; it was not run in the CI/local bench session that produced
-the headline numbers. The threshold sensitivity sweep should be run before production use.
-Evidence (pending): `bench/reports/bench-YYYYMMDD-cache-similarity.md` — threshold sensitivity table.
+### Measured similarity threshold: superseded — see ADR below
+The 0.92 placeholder discussed here has been measured and replaced. See "Semantic
+cache similarity threshold — measured" below for the sweep, the chosen value, and a
+false-positive finding that placeholder discussion didn't anticipate.
 
 ### Benchmark design decisions
 
@@ -297,3 +294,57 @@ and `bench/throughput.py` to populate these. Update this section with actual val
 - Cost reduction: 25% of would-be spend avoided by exact-cache hits (50 of 200 requests served from Redis with cost_cents=0)
 - Failover: 100% of requests succeed when primary provider returns 503; p50 gateway latency at depth=1 = 1 ms (FALLBACK_BACKOFF_BASE_MS=0; with default 500 ms backoff add ~500 ms per fallover depth)
 - Throughput saturation: ~5 concurrent requests at peak linear efficiency; plateau at ~730 RPS (single uvicorn worker); latency p95 crosses 2× baseline at concurrency=10
+
+## ADR: Semantic cache similarity threshold — measured (2026-07-13)
+
+Decision: `SEMANTIC_SIMILARITY_THRESHOLD` changes from the 0.92 placeholder to **0.95**,
+measured via `bench/cache_bench.py --mode=similarity` against a live OpenAI embedding
+API (`text-embedding-3-small`).
+
+### Methodology
+Built a 160-pair hand-labeled eval set (`bench/data/similarity_eval.jsonl`) across 4
+domains (customer support, coding Q&A, doc lookup, data queries), 3 classes per
+domain: `true_duplicate` (paraphrase, a hit is correct), `near_miss_trap` (high
+lexical overlap, different intent — e.g. differing order numbers, differing time
+windows, differing numeric parameters — a hit is a wrong-answer bug), `unrelated`
+(sanity floor). This is synthetic data, explicitly not captured production traffic.
+Swept thresholds 0.80→0.99 (step 0.01); measured true-positive rate (duplicate pairs
+correctly hit), trap false-positive rate (trap pairs wrongly hit), and unrelated hit
+rate at each point. Full sweep table and root-cause analysis:
+`bench/reports/bench-20260713-similarity-threshold.md`.
+
+### Finding: no threshold in the swept range meets the ≤1% false-positive target
+The selection rule (highest hit rate subject to trap FPR ≤ 1%) had no qualifying
+threshold. The strictest true-duplicate pair scored 0.9425 cosine similarity; a
+near-miss trap ("How do I track order #4521?" vs "…#4522?") scored 0.9925 — higher
+than every true duplicate in the set. A trap that out-scores the closest duplicate
+cannot be excluded by any global threshold while keeping that duplicate — this is a
+structural limit of cosine-similarity thresholding on numeric/ID-bearing near-misses,
+not a tuning problem. Above 0.95, trap FPR plateaus at a floor of 1.7% (one
+unresolvable pair) while true-positive rate drops to 0%; raising the threshold
+further buys no additional safety and only destroys recall.
+
+### Decision
+Ship **0.95** — the lowest threshold that reaches the measured trap-FPR floor, i.e.
+the safest available single-threshold setting on this eval set, not a passing result
+against the ≤1% target. On this eval set its true-positive rate is 0%, so the
+semantic cache should be expected to contribute near-zero hit rate until the
+underlying gap is closed. This is the conservative, correctness-first choice
+mandated for this cache: wrong answers are a correctness bug, so hit rate is
+sacrificed rather than risk serving a wrong answer for a numeric-ID mismatch.
+
+Rejected: keeping 0.92 (measured trap FPR 8.3% — an order of magnitude over target);
+picking any threshold in 0.80–0.94 for a higher illustrative hit rate (all such
+points have trap FPR well above 1%).
+
+### Follow-up (not implemented in this step)
+Closing the gap requires a non-similarity guard — e.g. extracting numeric
+literals/IDs from both requests and bypassing the cache when they differ — added
+alongside the existing bypass guardrails in `gateway/cache/guardrails.py`. Out of
+scope here: this step measures the threshold, it does not change cache lookup logic.
+
+### Limitation
+Validated on synthetic, hand-labeled pairs; real traffic may have a different domain
+mix and adversarial density. `SEMANTIC_SIMILARITY_THRESHOLD` stays a per-deployment
+config value for this reason — re-run the sweep against real (anonymized) query
+pairs once available.

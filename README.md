@@ -119,7 +119,7 @@ command above, or deploy your own to Fly.io following [gateway/DEPLOY.md](gatewa
 
 **Third provider** — adding one requires a new adapter in `translation/` but is otherwise mechanical. Excluded as scope discipline; two providers are sufficient to demonstrate the pattern.
 
-**Semantic threshold validation** — `bench/cache_bench.py --mode=similarity` sweeps thresholds 0.80–0.99 against the paraphrase corpus and measures precision/recall, but requires a live `OPENAI_API_KEY`. Run it to replace the 0.92 placeholder before production use.
+**Semantic threshold, measured, with a known gap** — `bench/cache_bench.py --mode=similarity` sweeps thresholds 0.80–0.99 against a labeled true-duplicate / near-miss-trap / unrelated eval set. The default (0.95) is the safest single threshold found, but it does not fully meet the ≤1% false-positive target: a numeric-ID near-miss out-scores every true duplicate in the eval set, a limit no global threshold can fix. See `bench/reports/bench-20260713-similarity-threshold.md` for the sweep, root-cause analysis, and the recommended follow-up (a non-similarity guard for mismatched numeric literals/IDs).
 
 **Dashboard authentication** — the six observability endpoints are read-only and unauthenticated. Restrict in production behind a reverse proxy (e.g., nginx `auth_basic`, Fly.io `[http_service.checks]`).
 

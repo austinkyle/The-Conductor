@@ -27,7 +27,11 @@ class Settings(BaseSettings):
     # default, not a hardcoded contract; routing model strings live in the DB.
     embedding_model: str = "text-embedding-3-small"
     embedding_api_base: str = "https://api.openai.com/v1"
-    semantic_similarity_threshold: float = 0.92
+    # Measured via bench/cache_bench.py --mode=similarity; see
+    # bench/reports/bench-20260713-similarity-threshold.md. 0.95 is the safest
+    # single-threshold setting found, not a threshold that meets the <=1%
+    # false-positive target — see that report's Root Cause section.
+    semantic_similarity_threshold: float = 0.95
     semantic_temperature_bypass: float = 0.3
     # Minimum characters in embed_text output to bother calling the embedding API.
     semantic_cache_min_chars: int = 1

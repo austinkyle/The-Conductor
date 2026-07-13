@@ -3,8 +3,9 @@
 Modes:
   --mode=gateway   Send 200 requests through the running gateway, read cache_status
                    from the requests table. Requires gateway + mock server running.
-  --mode=similarity  Embed all prompts, compute cosine similarities between paraphrase
-                   pairs, show hit rate at each threshold. Requires OPENAI_API_KEY.
+  --mode=similarity  Embed the labeled pairs in bench/data/similarity_eval.jsonl, sweep
+                   thresholds 0.80-0.99, and report true-positive/false-positive rates
+                   per threshold. Requires OPENAI_API_KEY.
 
 Usage:
     python bench/cache_bench.py --mode=gateway
@@ -21,6 +22,7 @@ Prerequisites:
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 from datetime import date, datetime, timezone
@@ -95,11 +97,13 @@ UNIQUE: list[str] = [t[0] for t in _SEED]
 PARAPHRASES: list[str] = [p for t in _SEED for p in t[1:]]  # 100 items, 2 per question
 CORPUS: list[str] = UNIQUE + UNIQUE + PARAPHRASES  # 200 total
 
-# Which unique question each paraphrase belongs to (for similarity analysis).
-# PARAPHRASES[2*i] and PARAPHRASES[2*i+1] are paraphrases of UNIQUE[i].
-_PARA_PARENT: list[int] = [i for i in range(len(UNIQUE)) for _ in range(2)]
+_SWEEP_THRESHOLDS = [round(0.80 + 0.01 * i, 2) for i in range(20)]  # 0.80 .. 0.99
 
-_THRESHOLDS = [0.85, 0.88, 0.90, 0.92, 0.94, 0.96]
+# Illustrative traffic mix for the "effective hit rate" column — not measured, just a
+# stated assumption for turning per-class rates into a single headline number.
+_ASSUMED_MIX = {"true_duplicate": 0.40, "near_miss_trap": 0.10, "unrelated": 0.50}
+
+_EVAL_SET_PATH = Path(__file__).parent / "data" / "similarity_eval.jsonl"
 
 _PORT = 9001
 _ALIAS = "bench-cache"
@@ -226,46 +230,170 @@ gateway mode uses the live gateway with threshold from SEMANTIC_SIMILARITY_THRES
     _write_report("cache", report)
 
 
+def _load_similarity_eval(path: Path) -> list[dict]:
+    rows = []
+    with path.open() as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+    return rows
+
+
 async def run_similarity_mode(api_key: str, api_base: str) -> None:
+    rows = _load_similarity_eval(_EVAL_SET_PATH)
+
+    # Dedupe text_a/text_b across pairs so every unique string is embedded once.
+    unique_texts = sorted({r["text_a"] for r in rows} | {r["text_b"] for r in rows})
+    text_index = {t: i for i, t in enumerate(unique_texts)}
+
     async with httpx.AsyncClient(timeout=httpx.Timeout(60.0)) as client:
-        print(f"Embedding {len(UNIQUE)} unique questions…")
-        unique_embeds = await embed_batch(client, UNIQUE, api_base, api_key)
+        print(f"Embedding {len(unique_texts)} unique strings from {len(rows)} labeled pairs…")
+        embeddings = await embed_batch(client, unique_texts, api_base, api_key)
 
-        print(f"Embedding {len(PARAPHRASES)} paraphrases…")
-        para_embeds = await embed_batch(client, PARAPHRASES, api_base, api_key)
-
-    # Similarity for each paraphrase vs. its parent unique question.
     similarities = [
-        cosine_similarity(para_embeds[j], unique_embeds[_PARA_PARENT[j]])
-        for j in range(len(PARAPHRASES))
+        cosine_similarity(embeddings[text_index[r["text_a"]]], embeddings[text_index[r["text_b"]]])
+        for r in rows
     ]
 
-    threshold_rows = []
-    for t in _THRESHOLDS:
-        hits = sum(1 for s in similarities if s >= t)
-        threshold_rows.append(f"| {t:.2f}      | {hits:<20} | {100.0 * hits / len(similarities):.1f}%     |")
+    by_class: dict[str, list[float]] = {"true_duplicate": [], "near_miss_trap": [], "unrelated": []}
+    for r, sim in zip(rows, similarities):
+        by_class[r["class"]].append(sim)
 
-    # Recommend: highest threshold where hit rate >= 70% (reasonable semantic recall).
-    best = max(
-        (t for t in _THRESHOLDS if sum(1 for s in similarities if s >= t) / len(similarities) >= 0.70),
-        default=_THRESHOLDS[0],
+    n_dupe = len(by_class["true_duplicate"])
+    n_trap = len(by_class["near_miss_trap"])
+    n_unrelated = len(by_class["unrelated"])
+
+    sweep_rows = []
+    per_threshold: dict[float, dict[str, float]] = {}
+    for t in _SWEEP_THRESHOLDS:
+        tpr = sum(1 for s in by_class["true_duplicate"] if s >= t) / n_dupe
+        trap_fpr = sum(1 for s in by_class["near_miss_trap"] if s >= t) / n_trap
+        unrelated_fpr = sum(1 for s in by_class["unrelated"] if s >= t) / n_unrelated
+        effective_hit_rate = (
+            _ASSUMED_MIX["true_duplicate"] * tpr
+            + _ASSUMED_MIX["near_miss_trap"] * trap_fpr
+            + _ASSUMED_MIX["unrelated"] * unrelated_fpr
+        )
+        per_threshold[t] = {
+            "tpr": tpr,
+            "trap_fpr": trap_fpr,
+            "unrelated_fpr": unrelated_fpr,
+            "effective_hit_rate": effective_hit_rate,
+        }
+        sweep_rows.append(
+            f"| {t:.2f} | {100 * tpr:.1f}% | {100 * trap_fpr:.1f}% | {100 * unrelated_fpr:.1f}% | {100 * effective_hit_rate:.1f}% |"
+        )
+
+    # Selection rule: among thresholds with trap false-positive rate <= 1%, take the one
+    # maximizing true-positive rate (i.e. hit rate); ties broken toward the lower
+    # threshold (more potential recall for equal measured risk).
+    candidates = [t for t in _SWEEP_THRESHOLDS if per_threshold[t]["trap_fpr"] <= 0.01]
+    target_met = bool(candidates)
+    if candidates:
+        best_tpr = max(per_threshold[t]["tpr"] for t in candidates)
+        chosen = min(t for t in candidates if per_threshold[t]["tpr"] == best_tpr)
+    else:
+        # No threshold in the sweep hits the 1% correctness bar. Fall back to the
+        # threshold(s) with the lowest measured trap FPR; among those, prefer the
+        # lowest threshold, since going higher buys no extra measured safety here
+        # (the floor is set by one structural outlier, not by threshold placement)
+        # while only costing more recall.
+        min_trap_fpr = min(per_threshold[t]["trap_fpr"] for t in _SWEEP_THRESHOLDS)
+        floor_candidates = [t for t in _SWEEP_THRESHOLDS if per_threshold[t]["trap_fpr"] == min_trap_fpr]
+        chosen = min(floor_candidates)
+
+    chosen_stats = per_threshold[chosen]
+
+    # Root cause for a missed target: any trap pair that out-scores the single most
+    # similar true-duplicate pair is un-fixable by a global threshold — no cut point
+    # can admit that duplicate while excluding that trap.
+    max_dupe_sim = max(by_class["true_duplicate"])
+    unresolvable_traps = sorted(
+        (
+            (sim, r)
+            for sim, r in zip(similarities, rows)
+            if r["class"] == "near_miss_trap" and sim > max_dupe_sim
+        ),
+        key=lambda x: -x[0],
+    )
+
+    root_cause_section = ""
+    if not target_met:
+        offenders = "\n".join(
+            f"- `{sim:.4f}` — {r['domain']}: {r['text_a']!r} vs {r['text_b']!r}"
+            for sim, r in unresolvable_traps
+        )
+        root_cause_section = f"""
+### Root cause: no threshold in range meets the ≤1% target
+The strictest true-duplicate pair in the eval set scores **{max_dupe_sim:.4f}** cosine
+similarity. At least one near-miss trap scores *higher* than that:
+{offenders}
+
+Because a trap out-scores the closest true duplicate, no single global threshold can
+admit that duplicate while excluding that trap — this is a structural limit of
+cosine-similarity thresholding on this embedding model for numeric/ID-bearing
+near-misses (e.g. differing only by an order number), not a threshold-tuning problem.
+Raising the threshold further does not improve safety against this failure class; it
+only destroys recall that would otherwise be safe.
+"""
+
+    not_met_note = (
+        ""
+        if target_met
+        else "\nThis does **not** meet the ≤1% correctness target — see Root Cause "
+        "above. It is the lowest threshold that reaches the measured trap-FPR floor "
+        "(1.7%); it is reported as the safest available single-threshold setting, not "
+        "as a passing result. Closing the remaining gap requires a non-similarity "
+        "guard (e.g. bypassing the cache when the two requests' numeric literals/IDs "
+        "differ), which is out of scope for this measurement-only step and is "
+        "recommended as follow-up work."
     )
 
     report = f"""\
-### Threshold Sensitivity (similarity mode)
-Paraphrase pairs: {len(PARAPHRASES)} ({len(UNIQUE)} unique prompts × 2 paraphrases each)
-Embedding model: text-embedding-3-small
+## Semantic Cache Similarity Threshold — {date.today().isoformat()}
 
-| Threshold | Pairs that would hit | Hit rate |
-|-----------|----------------------|----------|
-{chr(10).join(threshold_rows)}
+### Methodology
+- Eval set: `bench/data/similarity_eval.jsonl`, {len(rows)} hand-labeled request pairs
+  across 4 domains (customer support, coding Q&A, doc lookup, data queries).
+- **This is synthetic, hand-labeled data, not captured production traffic.** It is
+  designed to stress-test the threshold with adversarial near-miss cases, not to
+  represent real query distributions.
+- Classes: `true_duplicate` ({n_dupe} pairs, a cache hit is correct), `near_miss_trap`
+  ({n_trap} pairs, high lexical overlap but different intent — a cache hit here is a
+  wrong-answer bug), `unrelated` ({n_unrelated} pairs, sanity floor).
+- Embedding model: text-embedding-3-small via EMBEDDING_API_BASE. Unique strings are
+  deduped before embedding ({len(unique_texts)} embedding calls for {len(rows)} pairs).
 
-Recommended threshold: {best:.2f} (highest threshold with ≥70% paraphrase hit rate)
+### Threshold sweep (0.80 → 0.99, step 0.01)
+| Threshold | TPR (dupes hit) | Trap FPR (traps wrongly hit) | Unrelated hit rate | Effective hit rate* |
+|-----------|------------------|-------------------------------|---------------------|----------------------|
+{chr(10).join(sweep_rows)}
 
-Methodology: paraphrase corpus hand-crafted to test semantic similarity;
-similarity mode uses text-embedding-3-small via EMBEDDING_API_BASE.
+\\* Effective hit rate assumes an illustrative traffic mix of
+{int(100 * _ASSUMED_MIX["true_duplicate"])}% true duplicates /
+{int(100 * _ASSUMED_MIX["near_miss_trap"])}% near-miss traps /
+{int(100 * _ASSUMED_MIX["unrelated"])}% unrelated. This mix is an assumption for
+illustration, not a measurement of production traffic.
+
+### Selection
+Rule: choose the highest threshold-derived hit rate subject to trap false-positive
+rate ≤ 1%. Wrong answers are a correctness bug — we sacrifice hit rate for
+correctness, never the reverse.
+{root_cause_section}
+**{"Chosen" if target_met else "Recommended interim"} threshold: {chosen:.2f}**
+- True-positive rate: {100 * chosen_stats["tpr"]:.1f}%
+- Trap false-positive rate: {100 * chosen_stats["trap_fpr"]:.1f}%
+- Unrelated hit rate: {100 * chosen_stats["unrelated_fpr"]:.1f}%
+{not_met_note}
+
+### Limitations
+Validated on synthetic pairs; production traffic may differ in phrasing, domain mix,
+and adversarial density. `SEMANTIC_SIMILARITY_THRESHOLD` remains configurable per
+deployment for this reason — re-run this sweep against real (anonymized) query pairs
+once production traffic is available.
 """
-    _write_report("cache-similarity", report)
+    _write_report("similarity-threshold", report)
 
 
 def _write_report(scenario: str, content: str) -> None:

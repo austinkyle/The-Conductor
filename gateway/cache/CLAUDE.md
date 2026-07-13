@@ -43,7 +43,7 @@ Four conditions trigger bypass (checked in order):
 ### Semantic cache (pgvector)
 - Table: `semantic_cache` — `request_hash text`, `embedding vector(1536)`, `response_body jsonb`, `model text`
 - HNSW cosine index on `embedding` (migration 004)
-- Lookup: cosine similarity `1 - (embedding <=> $1)` ≥ `semantic_similarity_threshold` (default 0.92, placeholder — bench/ must validate)
+- Lookup: cosine similarity `1 - (embedding <=> $1)` ≥ `semantic_similarity_threshold` (default 0.95, measured — see Threshold note below)
 - Store: `ON CONFLICT (request_hash) DO NOTHING` — concurrent duplicates are harmless
 
 ### Write-at-close for streaming
@@ -57,4 +57,12 @@ Cache hits are served as a synthetic `chat.completion.chunk` SSE sequence matchi
 `app/main.py` registers the pgvector asyncpg codec via `init=_init_pool_conn` on pool creation so `list[float] ↔ vector` round-trips work on every connection.
 
 ### Threshold note
-0.92 is a placeholder from Phase 4. **Do not treat it as authoritative.** The bench/ harness (Phase 5) must measure hit-rate vs. false-positive rate to validate the threshold empirically before production use.
+0.95 is measured, not a placeholder: `bench/cache_bench.py --mode=similarity` sweeps
+0.80–0.99 against a 160-pair labeled eval set (true duplicates / adversarial
+near-miss traps / unrelated) and picks the safest single threshold found. It does
+**not** fully satisfy the ≤1% false-positive target — a numeric-ID near-miss
+("order #4521" vs "order #4522") out-scores every true duplicate in the eval set,
+which no global threshold can fix. See
+`bench/reports/bench-20260713-similarity-threshold.md` for the sweep, the root-cause
+analysis, and the recommended follow-up (a non-similarity guard for mismatched
+numeric literals/IDs, not yet implemented).

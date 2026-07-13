@@ -6,7 +6,8 @@ Drives synthetic load through the gateway and produces the numbers for the READM
 | Task type | READ | SKIP | Tools / Skills |
 |---|---|---|---|
 | Proxy-overhead measurement | bench/overhead.py | dashboard/ | asyncio / locust |
-| Cache hit-rate + cost-reduction | bench/cache_bench.py | translation/ | — |
+| Cache hit-rate + cost-reduction | bench/cache_bench.py --mode=gateway | translation/ | — |
+| Semantic threshold TPR/FPR sweep | bench/cache_bench.py --mode=similarity, bench/data/similarity_eval.jsonl | translation/ | live OPENAI_API_KEY |
 | Failover success / recovery time | bench/failover_bench.py | budgets/ | — |
 | Throughput / saturation | bench/throughput.py | — | — |
 
@@ -14,3 +15,9 @@ Drives synthetic load through the gateway and produces the numbers for the READM
 - Every report states METHODOLOGY (load pattern, hardware, provider mix). Methodology is what separates a benchmark from a marketing claim.
 - Report proxy overhead as added latency vs. calling the provider directly, p50/p95/p99. Be honest that a proxy adds latency; show it's small and bounded.
 - Output to bench/reports/bench-YYYYMMDD-scenario.md.
+
+## Similarity threshold eval set
+`bench/data/similarity_eval.jsonl` is a hand-labeled, synthetic set of request pairs
+(`true_duplicate` / `near_miss_trap` / `unrelated`) across 4 domains, used only by
+`--mode=similarity`. It is not production traffic — say so in any report generated
+from it. Report name: `bench/reports/bench-YYYYMMDD-similarity-threshold.md`.

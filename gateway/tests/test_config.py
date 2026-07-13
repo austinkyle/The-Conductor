@@ -22,4 +22,4 @@ def test_loads_with_required_present(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = Settings(_env_file=None)  # type: ignore[call-arg]
 
     assert settings.openai_api_key == "sk-x"
-    assert settings.semantic_similarity_threshold == 0.92  # default applied
+    assert settings.semantic_similarity_threshold == 0.95  # default applied
