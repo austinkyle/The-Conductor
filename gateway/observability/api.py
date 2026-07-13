@@ -12,12 +12,26 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
 
+from core.config import get_settings
 from observability import queries
 
-router = APIRouter(prefix="/v1/observability")
+
+def require_dashboard_token(authorization: str | None = Header(default=None)) -> None:
+    """Static bearer-token gate. Unset token (dev default) allows all requests
+    through — a warning is logged once at startup in that case (see app/main.py)."""
+    token = get_settings().dashboard_auth_token
+    if token is None:
+        return
+    if authorization != f"Bearer {token}":
+        raise HTTPException(401, "Unauthorized")
+
+
+router = APIRouter(
+    prefix="/v1/observability", dependencies=[Depends(require_dashboard_token)]
+)
 
 _VALID_WINDOWS = frozenset({"24h", "7d", "30d"})
 _VALID_BUCKETS = frozenset({"hour", "day"})

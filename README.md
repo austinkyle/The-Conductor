@@ -191,6 +191,19 @@ local instance with no shared budget.
 
 ---
 
+## Security
+
+`/v1/chat/completions` is authenticated per-key (`Authorization: Bearer <key>`,
+resolved and budget-checked against the DB — see `gateway/core/auth.py`). The
+six read-only `/v1/observability/*` endpoints sit behind a separate, simpler
+control: a single static bearer token (`DASHBOARD_AUTH_TOKEN`), required in
+production and optional in development (an unset token just logs a startup
+warning). Neither of these is a substitute for real user accounts — for
+enterprise deployments, put the gateway behind a reverse proxy or SSO layer
+(nginx, an identity-aware proxy, Fly.io app-level access controls) rather than
+relying on the static token alone, and terminate TLS in front of both the
+gateway and dashboard so the bearer tokens never travel in the clear.
+
 ## Future Work / Deliberately Out of Scope
 
 **Mid-stream failover** — not supported by design (ADR-002). Once the client has partial output, retrying elsewhere produces a corrupt stream.
@@ -199,6 +212,6 @@ local instance with no shared budget.
 
 **Semantic threshold, measured, with a known gap** — `bench/cache_bench.py --mode=similarity` sweeps thresholds 0.80–0.99 against a labeled true-duplicate / near-miss-trap / unrelated eval set. The default (0.95) is the safest single threshold found, but it does not fully meet the ≤1% false-positive target: a numeric-ID near-miss out-scores every true duplicate in the eval set, a limit no global threshold can fix. See `bench/reports/bench-20260713-similarity-threshold.md` for the sweep, root-cause analysis, and the recommended follow-up (a non-similarity guard for mismatched numeric literals/IDs).
 
-**Dashboard authentication** — the six observability endpoints are read-only and unauthenticated. Restrict in production behind a reverse proxy (e.g., nginx `auth_basic`, Fly.io `[http_service.checks]`).
+**User accounts, sessions, RBAC** — the static per-key and dashboard-token auth above stop anonymous read/write access but stop there. Multi-user accounts, session management, and role-based access control are enterprise-tier work, not this project's scope.
 
 **Horizontal scale** — Redis spend counters use `INCRBYFLOAT` (atomic); asyncpg connections are per-process. Multiple workers or machines work correctly but are not load-tested.

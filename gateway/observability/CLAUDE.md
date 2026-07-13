@@ -9,6 +9,7 @@
 ## Invariants
 - The `requests` table is the single spine for dashboard + budgets. One row per call, always written (even on error — set status/error_class).
 - All queries are read-only. No writes from the read API.
+- All endpoints on `router` require `Authorization: Bearer <DASHBOARD_AUTH_TOKEN>` via the `require_dashboard_token` dependency wired at router level — a new endpoint added to this router inherits the check automatically. See `core/config.py` (`dashboard_auth_token`, `environment`) and `docs/architecture/DECISIONS.md` Phase 7.
 
 ## Read API endpoints (all `GET /v1/observability/*?window=24h|7d|30d`)
 

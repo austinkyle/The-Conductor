@@ -456,3 +456,27 @@ showing identical digests for `DATABASE_URL` and `REDIS_URL` (both hashing to th
 same empty value) was the actual tell. Documented as the first Troubleshooting row
 in `gateway/DEPLOY.md` since it's the failure mode most likely to recur for anyone
 following the runbook with tooling that splits commands across processes.
+
+---
+
+## Phase 7 — Static bearer-token auth on the observability read API (2026-07-13)
+
+### A single static token via `Depends`, not per-endpoint checks
+Decision: one `require_dashboard_token` FastAPI dependency wired at the router level (`APIRouter(..., dependencies=[Depends(require_dashboard_token)])`), covering all six `/v1/observability/*` endpoints in one place.
+Rejected: adding an `Authorization` check inside each of the six endpoint handlers.
+Why: the six endpoints share one auth policy; a router-level dependency guarantees that a seventh endpoint added later inherits the check automatically instead of relying on the author remembering to add it. `/v1/chat/completions` is untouched — it already has real per-key auth (`core/auth.py`) and lives on the app directly, not this router.
+
+### `environment` + `dashboard_auth_token` in Settings, enforced by a model validator
+Decision: added `environment: Literal["development", "production"] = "development"` and `dashboard_auth_token: str | None = None` to `Settings`, with a `model_validator(mode="after")` that raises if `environment == "production"` and no token is set. In development, an unset token is allowed but logs a warning once at lifespan startup.
+Rejected: making the token unconditionally required (breaks local dev with no reverse proxy in front); a runtime check scattered across request handling instead of a boot-time one.
+Why: matches the file's existing "fail loudly at startup" contract for secrets — a misconfigured production deploy should never boot silently exposed. Dev stays frictionless (matches `docker-compose.yml`'s existing pattern of empty-string-tolerant secrets) but isn't silent about the gap.
+
+### No user accounts, sessions, or RBAC
+Decision: the fix is a single static shared token, not per-user credentials.
+Rejected: building login/session/role infrastructure now.
+Why: the acute problem is that six read endpoints are wide open on a public instance — a static token closes that door today. Multi-user auth is materially more scope (accounts, sessions, password/OAuth flow, RBAC) and is explicitly deferred to Future Work in the README; conflating "stop anonymous reads" with "build an identity system" would have blocked shipping the actual fix.
+
+### Dashboard token kept in memory only, never `localStorage`
+Decision: `dashboard/lib/api.ts` holds the bearer token in a module-level variable (optionally seeded from `NEXT_PUBLIC_DASHBOARD_AUTH_TOKEN` at build time for a deployed dashboard instance), with a `setAuthToken()` setter the page's input calls. Nothing is written to `localStorage`, cookies, or any other persistent store.
+Rejected: persisting the token in `localStorage` for convenience across reloads.
+Why: `localStorage` is readable by any script on the page (XSS blast radius) and survives long after the tab closes. A memory-only token is lost on refresh — an acceptable inconvenience for a bearer secret that gates a shared demo's request logs.

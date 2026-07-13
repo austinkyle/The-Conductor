@@ -1,6 +1,17 @@
 const BASE =
   process.env.NEXT_PUBLIC_GATEWAY_URL ?? "http://localhost:8000";
 
+// In-memory only — never persisted (localStorage, cookies) so a stolen device
+// or shared machine doesn't leak the token. Baked in at build time via
+// NEXT_PUBLIC_DASHBOARD_AUTH_TOKEN for a deployed dashboard, or set at runtime
+// via setAuthToken() from a page-level input.
+let authToken: string | null =
+  process.env.NEXT_PUBLIC_DASHBOARD_AUTH_TOKEN ?? null;
+
+export function setAuthToken(token: string | null): void {
+  authToken = token && token.length > 0 ? token : null;
+}
+
 export type Window = "24h" | "7d" | "30d";
 
 export type SpendBucket = { ts: string; cost_cents: number };
@@ -31,7 +42,10 @@ export type KeyUsage = {
 };
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { cache: "no-store" });
+  const headers: HeadersInit = authToken
+    ? { Authorization: `Bearer ${authToken}` }
+    : {};
+  const res = await fetch(`${BASE}${path}`, { cache: "no-store", headers });
   if (!res.ok) throw new Error(`${path}: ${res.status}`);
   return res.json() as Promise<T>;
 }

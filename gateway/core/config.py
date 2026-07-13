@@ -5,7 +5,9 @@ fails loudly at startup rather than silently running misconfigured.
 """
 
 from functools import lru_cache
+from typing import Literal
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -44,6 +46,21 @@ class Settings(BaseSettings):
     # App
     gateway_host: str = "0.0.0.0"
     gateway_port: int = 8000
+
+    # Deployment mode. Gates whether dashboard_auth_token is required.
+    environment: Literal["development", "production"] = "development"
+    # Static bearer token required on /v1/observability/* reads. Required in
+    # production (see validator below); optional in development, where an
+    # unset token just logs a startup warning instead of failing.
+    dashboard_auth_token: str | None = None
+
+    @model_validator(mode="after")
+    def _require_dashboard_token_in_production(self) -> "Settings":
+        if self.environment == "production" and self.dashboard_auth_token is None:
+            raise ValueError(
+                "DASHBOARD_AUTH_TOKEN is required when ENVIRONMENT=production"
+            )
+        return self
 
 
 @lru_cache

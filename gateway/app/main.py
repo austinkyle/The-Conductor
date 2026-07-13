@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -33,6 +34,11 @@ async def _init_pool_conn(conn: asyncpg.Connection) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
+    if settings.environment != "production" and settings.dashboard_auth_token is None:
+        logging.getLogger(__name__).warning(
+            "DASHBOARD_AUTH_TOKEN is unset — /v1/observability/* endpoints are "
+            "unauthenticated. Set DASHBOARD_AUTH_TOKEN before exposing this instance."
+        )
     app.state.pool = await asyncpg.create_pool(settings.database_url, init=_init_pool_conn)
     app.state.redis = redis.from_url(settings.redis_url)
     app.state.http = httpx.AsyncClient(timeout=httpx.Timeout(60.0))

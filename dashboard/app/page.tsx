@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import {
   api,
+  setAuthToken,
   type Window,
   type SpendBucket,
   type CacheStats,
@@ -19,6 +20,11 @@ import SavingsCard from "../components/SavingsCard";
 import FailoverTable from "../components/FailoverTable";
 import KeyTable from "../components/KeyTable";
 
+// If the deployed dashboard bakes a token in at build time, skip the input.
+const HAS_BUILD_TIME_TOKEN = Boolean(
+  process.env.NEXT_PUBLIC_DASHBOARD_AUTH_TOKEN
+);
+
 interface DashboardData {
   spend: SpendBucket[];
   cache: CacheStats;
@@ -33,6 +39,8 @@ export default function Home() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [tokenInput, setTokenInput] = useState("");
+  const [tokenVersion, setTokenVersion] = useState(0);
 
   useEffect(() => {
     setLoading(true);
@@ -52,7 +60,7 @@ export default function Home() {
         setError(err instanceof Error ? err.message : "Failed to load data");
       })
       .finally(() => setLoading(false));
-  }, [period]);
+  }, [period, tokenVersion]);
 
   return (
     <main style={{ maxWidth: 1200, margin: "0 auto", padding: "24px 16px" }}>
@@ -69,6 +77,41 @@ export default function Home() {
         </h1>
         <WindowSelect value={period} onChange={setPeriod} />
       </div>
+
+      {!HAS_BUILD_TIME_TOKEN && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+          <input
+            type="password"
+            placeholder="Gateway token (Authorization: Bearer …)"
+            value={tokenInput}
+            onChange={(e) => setTokenInput(e.target.value)}
+            style={{
+              flex: 1,
+              maxWidth: 360,
+              padding: "6px 10px",
+              border: "1px solid #ccc",
+              borderRadius: 6,
+              fontSize: 13,
+            }}
+          />
+          <button
+            onClick={() => {
+              setAuthToken(tokenInput);
+              setTokenVersion((v) => v + 1);
+            }}
+            style={{
+              padding: "6px 12px",
+              border: "1px solid #ccc",
+              borderRadius: 6,
+              fontSize: 13,
+              background: "#fafafa",
+              cursor: "pointer",
+            }}
+          >
+            Apply
+          </button>
+        </div>
+      )}
 
       {error && (
         <div
