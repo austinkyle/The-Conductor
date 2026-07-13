@@ -13,6 +13,8 @@ graph LR
     Dashboard -->|GET /v1/observability/*| GW
 ```
 
+![Dashboard preview](docs/images/dashboard-preview.png)
+
 ---
 
 ## Quickstart
