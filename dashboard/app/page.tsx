@@ -41,6 +41,7 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [tokenInput, setTokenInput] = useState("");
   const [tokenVersion, setTokenVersion] = useState(0);
+  const [authorized, setAuthorized] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -63,65 +64,52 @@ export default function Home() {
   }, [period, tokenVersion]);
 
   return (
-    <main style={{ maxWidth: 1200, margin: "0 auto", padding: "24px 16px" }}>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          marginBottom: 24,
-        }}
-      >
-        <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700 }}>
-          The Conductor
-        </h1>
+    <main style={{ maxWidth: 1200, margin: "0 auto", padding: "32px 24px" }}>
+      <div className="topbar">
+        <h1 className="wordmark">The Conductor</h1>
         <WindowSelect value={period} onChange={setPeriod} />
       </div>
 
       {!HAS_BUILD_TIME_TOKEN && (
-        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        <div className="token-input-wrap">
           <input
             type="password"
             placeholder="Gateway token (Authorization: Bearer …)"
             value={tokenInput}
-            onChange={(e) => setTokenInput(e.target.value)}
-            style={{
-              flex: 1,
-              maxWidth: 360,
-              padding: "6px 10px",
-              border: "1px solid #ccc",
-              borderRadius: 6,
-              fontSize: 13,
+            onChange={(e) => {
+              setTokenInput(e.target.value);
+              setAuthorized(false);
             }}
+            className="token-input focus-ring"
           />
           <button
             onClick={() => {
               setAuthToken(tokenInput);
+              setAuthorized(tokenInput.length > 0);
               setTokenVersion((v) => v + 1);
             }}
-            style={{
-              padding: "6px 12px",
-              border: "1px solid #ccc",
-              borderRadius: 6,
-              fontSize: 13,
-              background: "#fafafa",
-              cursor: "pointer",
-            }}
+            className="token-apply-btn focus-ring"
           >
             Apply
           </button>
+          {authorized && (
+            <span className="token-status">
+              <span className="status-dot" />
+              Authorized
+            </span>
+          )}
         </div>
       )}
 
       {error && (
         <div
           style={{
-            background: "#fee",
-            border: "1px solid #fcc",
-            borderRadius: 6,
+            background: "var(--error-soft)",
+            border: "1px solid var(--error)",
+            borderRadius: 8,
             padding: 12,
-            marginBottom: 16,
-            color: "#c00",
+            marginBottom: 24,
+            color: "var(--error)",
             fontSize: 14,
           }}
         >
@@ -129,13 +117,15 @@ export default function Home() {
         </div>
       )}
 
-      {loading && <p style={{ color: "#888" }}>Loading…</p>}
+      {loading && (
+        <p style={{ color: "var(--text-secondary)" }}>Loading…</p>
+      )}
 
       {data && (
         <div
           style={{
             display: "grid",
-            gap: 16,
+            gap: 24,
             gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
           }}
         >

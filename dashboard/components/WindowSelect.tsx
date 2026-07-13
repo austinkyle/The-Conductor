@@ -16,22 +16,13 @@ const LABELS: Record<Window, string> = {
 
 export default function WindowSelect({ value, onChange }: Props) {
   return (
-    <div style={{ display: "flex", gap: 4 }}>
+    <div className="segmented">
       {OPTIONS.map((w) => (
         <button
           key={w}
           onClick={() => onChange(w)}
-          style={{
-            padding: "6px 14px",
-            borderRadius: 6,
-            border: "1px solid",
-            borderColor: value === w ? "#0070f3" : "#ddd",
-            background: value === w ? "#0070f3" : "#fff",
-            color: value === w ? "#fff" : "#333",
-            cursor: "pointer",
-            fontWeight: value === w ? 600 : 400,
-            fontSize: 13,
-          }}
+          data-active={value === w}
+          className="segmented-btn focus-ring"
         >
           {LABELS[w]}
         </button>

@@ -6,26 +6,20 @@ interface Props {
 
 export default function SavingsCard({ savings }: Props) {
   const cents = Number(savings.cost_saved_cents);
+  const isZero = cents === 0;
   const display =
     cents >= 100 ? `$${(cents / 100).toFixed(4)}` : `${cents.toFixed(4)}¢`;
 
   return (
-    <div
-      style={{
-        background: "#fff",
-        borderRadius: 8,
-        border: "1px solid #eee",
-        padding: 16,
-      }}
-    >
-      <h2 style={{ margin: "0 0 12px 0", fontSize: 15, fontWeight: 600 }}>
-        Cache savings
-      </h2>
-      <div style={{ fontSize: 32, fontWeight: 700, color: "#0070f3" }}>
+    <div className="card">
+      <h2 className="card-label">Cache savings</h2>
+      <div className={`metric-value${isZero ? " is-zero" : ""}`}>
         {display}
       </div>
-      <div style={{ color: "#888", fontSize: 13 }}>
-        would-be cost avoided by cache
+      <div className="metric-hint">
+        {isZero
+          ? "No cache hits yet in this window"
+          : "would-be cost avoided by cache"}
       </div>
     </div>
   );

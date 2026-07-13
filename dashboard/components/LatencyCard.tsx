@@ -16,9 +16,9 @@ interface Props {
 }
 
 const ROWS = [
-  { pct: "p50", color: "#4ade80" },
-  { pct: "p95", color: "#fb923c" },
-  { pct: "p99", color: "#f87171" },
+  { pct: "p50", color: "var(--success)" },
+  { pct: "p95", color: "var(--warn)" },
+  { pct: "p99", color: "var(--error)" },
 ] as const;
 
 export default function LatencyCard({ latency }: Props) {
@@ -28,30 +28,41 @@ export default function LatencyCard({ latency }: Props) {
   });
 
   return (
-    <div
-      style={{
-        background: "#fff",
-        borderRadius: 8,
-        border: "1px solid #eee",
-        padding: 16,
-      }}
-    >
-      <h2 style={{ margin: "0 0 12px 0", fontSize: 15, fontWeight: 600 }}>
-        Latency (ms)
-      </h2>
+    <div className="card">
+      <h2 className="card-label">Latency (ms)</h2>
       {data.length === 0 ? (
-        <p style={{ color: "#888" }}>No data.</p>
+        <div className="empty-state">
+          <span className="status-dot" />
+          No completed requests in this window
+        </div>
       ) : (
         <ResponsiveContainer width="100%" height={120}>
           <BarChart data={data} layout="vertical">
-            <XAxis type="number" tick={{ fontSize: 11 }} unit=" ms" />
+            <XAxis
+              type="number"
+              tick={{ fontSize: 11, fill: "var(--text-secondary)" }}
+              unit=" ms"
+              stroke="var(--border)"
+            />
             <YAxis
               type="category"
               dataKey="pct"
-              tick={{ fontSize: 12 }}
+              tick={{ fontSize: 12, fill: "var(--text-secondary)" }}
               width={28}
+              stroke="var(--border)"
             />
             <Tooltip
+              contentStyle={{
+                background: "var(--bg-surface)",
+                border: "1px solid var(--border)",
+                borderRadius: 6,
+                fontSize: 12,
+              }}
+              itemStyle={{
+                color: "var(--text-primary)",
+                fontFamily: "var(--font-mono)",
+              }}
+              labelStyle={{ color: "var(--text-secondary)" }}
               formatter={(v) => [`${Number(v ?? 0).toFixed(0)} ms`, "Latency"]}
             />
             <Bar dataKey="ms" radius={[0, 4, 4, 0]}>

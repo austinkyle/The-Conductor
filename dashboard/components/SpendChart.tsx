@@ -29,35 +29,61 @@ export default function SpendChart({ data }: Props) {
   }));
 
   return (
-    <div
-      style={{
-        background: "#fff",
-        borderRadius: 8,
-        border: "1px solid #eee",
-        padding: "16px 8px",
-      }}
-    >
-      <h2 style={{ margin: "0 0 12px 8px", fontSize: 15, fontWeight: 600 }}>
-        Spend over time
-      </h2>
+    <div className="card">
+      <h2 className="card-label">Spend over time</h2>
       {chartData.length === 0 ? (
-        <p style={{ color: "#888", padding: "0 8px" }}>
-          No data for this window.
-        </p>
+        <div className="empty-state">
+          <span className="status-dot" />
+          No spend recorded in this window
+        </div>
       ) : (
         <ResponsiveContainer width="100%" height={200}>
           <AreaChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="ts" tick={{ fontSize: 11 }} />
-            <YAxis tick={{ fontSize: 11 }} unit="¢" />
+            <defs>
+              <linearGradient id="spendFill" x1="0" y1="0" x2="0" y2="1">
+                <stop
+                  offset="0%"
+                  stopColor="var(--accent)"
+                  stopOpacity={0.3}
+                />
+                <stop offset="100%" stopColor="var(--accent)" stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid
+              strokeDasharray="3 3"
+              stroke="var(--border)"
+              vertical={false}
+            />
+            <XAxis
+              dataKey="ts"
+              tick={{ fontSize: 11, fill: "var(--text-secondary)" }}
+              stroke="var(--border)"
+            />
+            <YAxis
+              tick={{ fontSize: 11, fill: "var(--text-secondary)" }}
+              unit="¢"
+              stroke="var(--border)"
+            />
             <Tooltip
+              contentStyle={{
+                background: "var(--bg-surface)",
+                border: "1px solid var(--border)",
+                borderRadius: 8,
+                fontSize: 12,
+              }}
+              itemStyle={{
+                color: "var(--text-primary)",
+                fontFamily: "var(--font-mono)",
+              }}
+              labelStyle={{ color: "var(--text-secondary)" }}
               formatter={(v) => [`${Number(v ?? 0).toFixed(4)}¢`, "Cost"]}
             />
             <Area
               type="monotone"
               dataKey="cents"
-              stroke="#0070f3"
-              fill="#e0f0ff"
+              stroke="var(--accent)"
+              fill="url(#spendFill)"
+              strokeWidth={2}
             />
           </AreaChart>
         </ResponsiveContainer>

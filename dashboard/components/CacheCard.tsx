@@ -4,86 +4,46 @@ interface Props {
   cache: CacheStats;
 }
 
+const ROWS: Array<[label: string, key: keyof CacheStats]> = [
+  ["Exact hits", "exact_hit"],
+  ["Semantic hits", "semantic_hit"],
+  ["Misses", "miss"],
+  ["Bypass — no cache", "no_cache"],
+  ["Bypass — recent context", "recent_context"],
+  ["Bypass — temperature", "temperature"],
+  ["Bypass — tool use", "tool_use"],
+];
+
 export default function CacheCard({ cache }: Props) {
+  const isZero = cache.total === 0;
   const hitRate = (cache.hit_rate * 100).toFixed(1);
+
   return (
-    <div
-      style={{
-        background: "#fff",
-        borderRadius: 8,
-        border: "1px solid #eee",
-        padding: 16,
-      }}
-    >
-      <h2 style={{ margin: "0 0 12px 0", fontSize: 15, fontWeight: 600 }}>
-        Cache
-      </h2>
-      <div style={{ fontSize: 32, fontWeight: 700, color: "#16a34a" }}>
-        {hitRate}%
+    <div className="card">
+      <h2 className="card-label">Cache</h2>
+      <div className={`metric-value${isZero ? " is-zero" : ""}`}>
+        {hitRate}
+        <span className="metric-accent">%</span>
       </div>
-      <div style={{ color: "#888", fontSize: 13, marginBottom: 12 }}>
-        hit rate
+      <div className="metric-hint" style={{ marginBottom: isZero ? 0 : 16 }}>
+        {isZero ? "No requests in this window" : "hit rate"}
       </div>
-      <table
-        style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}
-      >
-        <tbody>
-          <tr>
-            <td>Exact hits</td>
-            <td style={{ textAlign: "right", fontWeight: 600 }}>
-              {cache.exact_hit.toLocaleString()}
-            </td>
-          </tr>
-          <tr>
-            <td>Semantic hits</td>
-            <td style={{ textAlign: "right", fontWeight: 600 }}>
-              {cache.semantic_hit.toLocaleString()}
-            </td>
-          </tr>
-          <tr>
-            <td>Misses</td>
-            <td style={{ textAlign: "right", fontWeight: 600 }}>
-              {cache.miss.toLocaleString()}
-            </td>
-          </tr>
-          <tr>
-            <td>Bypass — no cache</td>
-            <td style={{ textAlign: "right", fontWeight: 600 }}>
-              {cache.no_cache.toLocaleString()}
-            </td>
-          </tr>
-          <tr>
-            <td>Bypass — recent context</td>
-            <td style={{ textAlign: "right", fontWeight: 600 }}>
-              {cache.recent_context.toLocaleString()}
-            </td>
-          </tr>
-          <tr>
-            <td>Bypass — temperature</td>
-            <td style={{ textAlign: "right", fontWeight: 600 }}>
-              {cache.temperature.toLocaleString()}
-            </td>
-          </tr>
-          <tr>
-            <td>Bypass — tool use</td>
-            <td style={{ textAlign: "right", fontWeight: 600 }}>
-              {cache.tool_use.toLocaleString()}
-            </td>
-          </tr>
-          <tr style={{ borderTop: "1px solid #eee" }}>
-            <td style={{ paddingTop: 6 }}>Total</td>
-            <td
-              style={{
-                textAlign: "right",
-                fontWeight: 600,
-                paddingTop: 6,
-              }}
-            >
-              {cache.total.toLocaleString()}
-            </td>
-          </tr>
-        </tbody>
-      </table>
+      {!isZero && (
+        <table className="data-table">
+          <tbody>
+            {ROWS.map(([label, key]) => (
+              <tr key={key}>
+                <td style={{ color: "var(--text-secondary)" }}>{label}</td>
+                <td className="num">{cache[key].toLocaleString()}</td>
+              </tr>
+            ))}
+            <tr>
+              <td style={{ color: "var(--text-secondary)" }}>Total</td>
+              <td className="num">{cache.total.toLocaleString()}</td>
+            </tr>
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }
