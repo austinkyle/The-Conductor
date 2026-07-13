@@ -60,6 +60,10 @@ class CacheStats(BaseModel):
     exact_hit: int
     semantic_hit: int
     miss: int
+    temperature: int
+    no_cache: int
+    recent_context: int
+    tool_use: int
     hit_rate: float
 
 
@@ -119,6 +123,10 @@ async def obs_cache(request: Request, window: str = "7d") -> CacheStats:
         exact_hit=exact_hit,
         semantic_hit=semantic_hit,
         miss=miss,
+        temperature=int(row["temperature"]),
+        no_cache=int(row["no_cache"]),
+        recent_context=int(row["recent_context"]),
+        tool_use=int(row["tool_use"]),
         hit_rate=hit_rate,
     )
 

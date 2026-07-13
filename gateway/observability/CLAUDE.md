@@ -16,7 +16,7 @@
 | Endpoint | Response shape |
 |---|---|
 | `/spend?window&bucket=hour\|day` | `[{ts: datetime, cost_cents: Decimal}]` |
-| `/cache` | `{total, exact_hit, semantic_hit, miss: int, hit_rate: float}` |
+| `/cache` | `{total, exact_hit, semantic_hit, miss, temperature, no_cache, recent_context, tool_use: int, hit_rate: float}` |
 | `/latency` | `{p50, p95, p99: float \| null}` |
 | `/savings` | `{cost_saved_cents: Decimal}` |
 | `/failovers` | `[{ts, requested_model, served_model: str\|null, fallback_depth: int}]` |

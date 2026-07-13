@@ -108,7 +108,7 @@ def test_bypass_cache_no_cache_dict() -> None:
 
 def test_bypass_cache_recent_context_dict() -> None:
     body: JSON = {"model": "gpt-4", "cache": {"recent_context": True}, "messages": []}
-    assert should_bypass(body) == "no_cache"
+    assert should_bypass(body) == "recent_context"
 
 
 def test_bypass_tools_non_empty() -> None:

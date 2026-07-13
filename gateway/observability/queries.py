@@ -50,8 +50,11 @@ async def cache_stats(conn: asyncpg.Connection, window: str) -> asyncpg.Record:
             COUNT(*)                                                                   AS total,
             COUNT(*) FILTER (WHERE cache_status = 'exact_hit')                        AS exact_hit,
             COUNT(*) FILTER (WHERE cache_status = 'semantic_hit')                     AS semantic_hit,
-            COUNT(*) FILTER (WHERE cache_status NOT IN ('exact_hit', 'semantic_hit')
-                                OR cache_status IS NULL)                               AS miss
+            COUNT(*) FILTER (WHERE cache_status = 'miss' OR cache_status IS NULL)     AS miss,
+            COUNT(*) FILTER (WHERE cache_status = 'temperature')                      AS temperature,
+            COUNT(*) FILTER (WHERE cache_status = 'no_cache')                         AS no_cache,
+            COUNT(*) FILTER (WHERE cache_status = 'recent_context')                   AS recent_context,
+            COUNT(*) FILTER (WHERE cache_status = 'tool_use')                         AS tool_use
         FROM requests
         WHERE created_at >= NOW() - INTERVAL '{interval}'
         """

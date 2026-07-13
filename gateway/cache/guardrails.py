@@ -24,8 +24,10 @@ def should_bypass(body: JSON, *, temperature_bypass: float = 0.3) -> str | None:
     if cache_flag is False:
         return "no_cache"
     if isinstance(cache_flag, dict):
-        if cache_flag.get("no_cache") or cache_flag.get("recent_context"):
+        if cache_flag.get("no_cache"):
             return "no_cache"
+        if cache_flag.get("recent_context"):
+            return "recent_context"
 
     tools = body.get("tools")
     if isinstance(tools, list) and tools:

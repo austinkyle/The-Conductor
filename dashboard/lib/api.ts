@@ -20,6 +20,10 @@ export type CacheStats = {
   exact_hit: number;
   semantic_hit: number;
   miss: number;
+  temperature: number;
+  no_cache: number;
+  recent_context: number;
+  tool_use: number;
   hit_rate: number;
 };
 export type LatencyStats = {

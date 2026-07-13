@@ -13,14 +13,14 @@
 - BYPASS cache when: temperature above threshold, `no-cache` flag set, tool-use request, very recent context. A semantic cache that ignores temperature is a correctness bug.
 - Cache AFTER a stream completes; serve hits as a synthetic stream.
 - Similarity threshold is empirical — justify it with measured data from bench/, not a magic number.
-- Write `cache_status` (miss / exact_hit / semantic_hit) to every request row.
+- Write `cache_status` (miss / exact_hit / semantic_hit / one of the four bypass reasons) to every request row — bypasses are distinguishable from genuine misses, not collapsed into `"miss"`.
 
 ## As built (Phase 4)
 
 ### Module layout
 | File | Owns |
 |---|---|
-| `guardrails.py` | `should_bypass(body, *, temperature_bypass) -> str \| None` — pure, no I/O |
+| `guardrails.py` | `should_bypass(body, *, temperature_bypass) -> str \| None` — pure, no I/O. Returns a distinct reason per condition (`"temperature"`, `"no_cache"`, `"recent_context"`, `"tool_use"`) — never collapsed. |
 | `exact.py` | `normalize`, `request_hash`, `get`, `put` — Redis SHA-256 exact match |
 | `semantic.py` | `embed_text`, `embed`, `lookup`, `store` — pgvector ANN search |
 | `replay.py` | `synthetic_stream`, `assembled_to_response` — SSE replay for cache hits |

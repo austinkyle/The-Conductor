@@ -36,7 +36,16 @@ def _build_app() -> FastAPI:
 @pytest.fixture(autouse=True)
 def _stub_query(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_cache_stats(conn: object, window: str) -> dict[str, int]:
-        return {"total": 0, "exact_hit": 0, "semantic_hit": 0, "miss": 0}
+        return {
+            "total": 0,
+            "exact_hit": 0,
+            "semantic_hit": 0,
+            "miss": 0,
+            "temperature": 0,
+            "no_cache": 0,
+            "recent_context": 0,
+            "tool_use": 0,
+        }
 
     monkeypatch.setattr(queries, "cache_stats", fake_cache_stats)
 

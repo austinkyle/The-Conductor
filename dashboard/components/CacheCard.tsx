@@ -46,6 +46,30 @@ export default function CacheCard({ cache }: Props) {
               {cache.miss.toLocaleString()}
             </td>
           </tr>
+          <tr>
+            <td>Bypass — no cache</td>
+            <td style={{ textAlign: "right", fontWeight: 600 }}>
+              {cache.no_cache.toLocaleString()}
+            </td>
+          </tr>
+          <tr>
+            <td>Bypass — recent context</td>
+            <td style={{ textAlign: "right", fontWeight: 600 }}>
+              {cache.recent_context.toLocaleString()}
+            </td>
+          </tr>
+          <tr>
+            <td>Bypass — temperature</td>
+            <td style={{ textAlign: "right", fontWeight: 600 }}>
+              {cache.temperature.toLocaleString()}
+            </td>
+          </tr>
+          <tr>
+            <td>Bypass — tool use</td>
+            <td style={{ textAlign: "right", fontWeight: 600 }}>
+              {cache.tool_use.toLocaleString()}
+            </td>
+          </tr>
           <tr style={{ borderTop: "1px solid #eee" }}>
             <td style={{ paddingTop: 6 }}>Total</td>
             <td

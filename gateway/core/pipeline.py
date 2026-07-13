@@ -346,7 +346,7 @@ async def proxy_chat_completion(
         status="success",
         error_class=None,
         fallback_depth=won.depth,
-        cache_status="miss",
+        cache_status=bypass or "miss",
         api_key_id=key.id if key else None,
         prompt_tokens=pt,
         completion_tokens=ct,
@@ -433,7 +433,7 @@ async def stream_chat_completion(
         status="success",
         error_class=None,
         fallback_depth=won.depth,
-        cache_status="miss",
+        cache_status=bypass or "miss",
         api_key_id=key.id if key else None,
         latency_ms=latency_ms,
     )

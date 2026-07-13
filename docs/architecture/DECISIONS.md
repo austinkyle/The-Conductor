@@ -480,3 +480,27 @@ Why: the acute problem is that six read endpoints are wide open on a public inst
 Decision: `dashboard/lib/api.ts` holds the bearer token in a module-level variable (optionally seeded from `NEXT_PUBLIC_DASHBOARD_AUTH_TOKEN` at build time for a deployed dashboard instance), with a `setAuthToken()` setter the page's input calls. Nothing is written to `localStorage`, cookies, or any other persistent store.
 Rejected: persisting the token in `localStorage` for convenience across reloads.
 Why: `localStorage` is readable by any script on the page (XSS blast radius) and survives long after the tab closes. A memory-only token is lost on refresh — an acceptable inconvenience for a bearer secret that gates a shared demo's request logs.
+
+---
+
+## Phase 8 — Single cache path + distinct bypass reasons + Next.js patch (2026-07-13)
+
+### Extract `_cache_lookup`/`_cache_write`/`_insert_cache_hit` as plain functions, not a `CacheManager` class
+Decision: `pipeline.py`'s duplicated exact/semantic lookup + write-back logic (present once in `proxy_chat_completion`, once in `stream_chat_completion`) collapses into three private functions consumed by both branches.
+Rejected: a `CacheManager` class holding the connection/redis/settings as instance state.
+Why: the code style contract requires two concrete callers before introducing an abstraction, and no real state needs to be held across calls — a function beats a Manager here. This is the second time this exact duplication shape has caused a bug (a jsonb-handling blocker previously existed in both copies at once); collapsing to one path removes the class of bug, not just today's instance of it.
+
+### Bypass reasons reuse `should_bypass`'s own return strings as `cache_status`
+Decision: `pipeline.py`'s two success-path `insert_request` calls write `cache_status=bypass or "miss"` instead of always `"miss"`. `cache/guardrails.py::should_bypass` now returns `"recent_context"` distinctly from `"no_cache"` instead of collapsing both into `"no_cache"`.
+Rejected: inventing new dashboard-facing vocabulary separate from the guardrail's internal reason strings; adding a DB migration/CHECK constraint to enumerate allowed values.
+Why: reusing the guardrail's own strings means the reason has exactly one source of truth. `requests.cache_status` is plain `text` with no CHECK constraint (`001_init.sql`), so no migration was needed — only the writer and the two downstream readers (`observability/queries.py::cache_stats`, the dashboard's `CacheStats` type) needed updating. Before this fix, every bypassed request was indistinguishable from a genuine cache miss in the `requests` row and the dashboard — the reported "recent_context/no_cache collapse" was a symptom of the deeper bug that no bypass reason was ever persisted at all.
+
+### Safety-net tests added before refactoring, not after
+Decision: added cache-integration tests (exact hit, semantic hit, true miss, and one test per bypass reason, for both streaming and non-streaming) to `test_proxy.py`/`test_streaming.py` first, confirmed them against the pre-refactor implementation, then refactored and re-ran to confirm identical pass/fail counts.
+Rejected: refactoring first and writing tests against the new shape.
+Why: neither test file previously drove a real cache hit/miss through `pipeline.py` — an autouse fixture forced a blanket bypass in both files. Without tests exercising the actual duplicated logic, the refactor would have had no way to prove behavior was preserved rather than just superficially preserved.
+
+### Next.js patched within the 14.x line, not the `npm audit fix --force` major bump
+Decision: bumped `next` from `^14.2.0` to `^14.2.35` (current patched release in the 14.2.x line).
+Rejected: `npm audit fix --force`'s proposed jump to `next@16.2.10`.
+Why: task scope was a security patch, not a major-version migration; a two-major-version jump carries breaking-change risk disproportionate to closing an audit finding.

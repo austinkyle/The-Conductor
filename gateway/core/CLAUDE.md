@@ -16,6 +16,7 @@ the SSE streaming engine. The request abstraction is streaming-aware from day on
 
 ## As built — streaming (Phase 2)
 - `pipeline._prepare` is the shared setup for both branches (parse → resolve → adapter → key → out_body). `proxy_chat_completion` is non-streaming; `stream_chat_completion` is the SSE path. `app/main.py` branches on the `stream` flag to pick `StreamingResponse` vs `JSONResponse`.
+- Cache check/write is also shared: `_cache_lookup` (exact → semantic, writes the hit row) and `_cache_write` (post-response/post-stream write-back), backed by `_insert_cache_hit` for the row-write. Both branches call the same three helpers — no duplicated cache logic between streaming and non-streaming.
 - `streaming.py` is the engine: `iter_sse` (parse provider SSE lines → `SSEEvent`), `sse_encode` (chunk dict → SSE frame), `stream_openai` (forward live + buffer text + reconcile usage). Adapters yield OpenAI `chat.completion.chunk` dicts; the engine never branches on provider.
 - At stream close the engine stashes `req.usage` (reconciled) and `req.assembled_content` (buffered text) for Phase 4 (cache) / Phase 5 (budgets); it emits its own `data: [DONE]`.
 - The upstream status is checked at stream open only — a `>=400` raises before the first token. No mid-stream failover (ADR-002).
