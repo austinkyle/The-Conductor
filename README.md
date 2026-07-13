@@ -181,7 +181,7 @@ print(client.chat.completions.create(model="fast", messages=[{"role":"user","con
 `demo-key` is a real, shared API key — not a rate-limited afterthought. It is
 **hard-capped at $10/month by the gateway's own budget enforcement**
 (`gateway/budgets/enforce.py`): once spend crosses the cap, requests are rejected
-with a 429 regardless of who's calling. The cap resets monthly. Use it to try
+with a 402 regardless of who's calling. The cap resets monthly. Use it to try
 streaming, caching, and failover for yourself; don't expect it to still have
 budget left if a lot of people have used it since this was written.
 
