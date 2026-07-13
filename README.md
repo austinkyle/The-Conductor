@@ -74,27 +74,48 @@ These are the four decisions that shaped the design. Each one had a real alterna
 
 ## Benchmark Results
 
-> **Interim note:** the numbers below are from a fixed, reproducible harness
-> (warmup, pinned worker/connection config, 3 trials/run, 3 independent runs
-> agreeing within ~15% — see `bench/README.md`) run on a **dev laptop**, not
-> the deployed reference instance. The previous numbers in this table (2.3 ms
-> p50 overhead, ~730 RPS peak) came from a single un-repeated run and did not
-> reproduce — an independent re-run came out 2-4x worse — so they have been
-> retracted. FINAL numbers will be re-measured on the deployed Fly instance
-> and will replace these.
+**Final note:** the numbers below (overhead, throughput, failover) were re-measured
+directly on the deployed Fly instance — `bench/overhead.py`, `bench/throughput.py`,
+and `bench/failover_bench.py` were uploaded via `fly ssh sftp` and run over an SSH
+session against the live `conductor-demo` machine (shared-cpu-1x, 1 GiB, `sjc`),
+hitting the same already-running gateway process real users hit. The mocked-provider
+methodology is unchanged (see `bench/README.md`) — only the hardware and network path
+changed. The dev-laptop numbers from the first measurement round are retained below
+for comparison; they are **not** the same run environment and should not be read as
+"the gateway got 60x slower" — see the note under the table.
 
-All numbers from `bench/reports/` — run against a local mock provider on loopback, single uvicorn worker (pinned via `GATEWAY_WORKERS`). Each is the mean across 3 independent full harness runs (3 trials each); see the linked reports for per-run and per-trial spread.
+| Benchmark | Dev laptop (first measurement) | Deployed Fly instance (final) |
+|---|---|---|
+| Overhead p50 | ~3.6 ms added over direct provider call | ~216 ms added |
+| Overhead p95 | ~8.0 ms added | ~224 ms added |
+| Overhead p99 | ~12.0 ms added | ~255 ms added |
+| Cache hit rate | 25.0% (50/200 exact hits under bench corpus) | not re-measured on this instance (see note) |
+| Failover success rate | 100% (200/200 when primary returns 503) | 100% (200/200); depth=1 latency p50 576 ms |
+| Throughput peak | ~634 RPS, single worker, saturation at ~10 concurrent | ~44 RPS, single worker, saturation at ~20 concurrent |
 
-| Benchmark | Result |
-|---|---|
-| Overhead p50 | ~3.6 ms added over direct provider call (3 runs: 3.41 / 3.44 / 3.89 ms) |
-| Overhead p95 | ~8.0 ms added |
-| Overhead p99 | ~12.0 ms added |
-| Cache hit rate | 25.0% (50/200 exact hits under bench corpus) |
-| Failover success rate | 100% (200/200 when primary returns 503) |
-| Throughput peak | ~634 RPS mean (3 runs: 601 / 666 / 634 RPS), single worker, saturation at ~10 concurrent |
+Reports: [`bench-20260713-163439-overhead.md`](bench/reports/bench-20260713-163439-overhead.md), [`bench-20260713-163758-throughput.md`](bench/reports/bench-20260713-163758-throughput.md), [`bench-20260713-fly-failover.md`](bench/reports/bench-20260713-fly-failover.md).
 
-**Methodology:** Cache bypassed for overhead and throughput benches (`cache: {no_cache: true}`). `FALLBACK_BACKOFF_BASE_MS=0` for failover timing. Semantic cache skipped in bench run (no live `OPENAI_API_KEY`); exact-cache hit rate reflects the 50-question paraphrase corpus with identical repeats.
+**Why overhead and throughput look worse on Fly, not better:** the dev-laptop run had
+Postgres and Redis on loopback (sub-millisecond). The deployed instance's Postgres
+(Neon) and Redis (Upstash) are managed services reached over the public internet from
+a `sjc` VM — every request pays real round-trip latency to both on the cache-check and
+request-log write paths, which the local run couldn't see. This is an honest,
+structural cost of the managed-services deployment topology, not a regression in the
+gateway's own code — the mocked-provider methodology (isolating *added* latency from
+provider latency) is identical in both runs. Reducing it would mean colocating the
+gateway with its Postgres/Redis (e.g. Fly Postgres/Redis in the same region), which is
+future work, not this deployment's goal.
+
+**Cache hit rate** was intentionally **not** re-run on the deployed instance:
+`bench/cache_bench.py --mode=gateway` calls `redis.flushdb()` and
+`DELETE FROM semantic_cache` to start from a clean slate — safe against a disposable
+local stack, but against the shared live instance it would wipe the real exact-cache
+entries and, because budget counters live in the same Redis keyspace
+(`budget:{api_key_id}:{YYYY-MM}`), reset `demo-key`'s and `bench-key`'s spend back to
+zero. That's not worth a benchmark number. The dev-laptop hit-rate figure stands as
+the correctness benchmark; it measures cache logic, not this deployment's hardware.
+
+**Methodology:** Cache bypassed for overhead and throughput benches (`cache: {no_cache: true}`). Failover ran against the deployed instance's default `FALLBACK_BACKOFF_BASE_MS=500` (production config, not the local `=0` speed setting), so the depth=1 latency above includes one real 500 ms backoff sleep per request — that's expected chain-walk behavior, not overhead. Semantic-similarity-threshold sweep (`--mode=similarity`) is a measurement of embedding-model quality, not hardware, so the existing report stands unchanged.
 
 ---
 
@@ -117,8 +138,26 @@ See [gateway/DEPLOY.md](gateway/DEPLOY.md) for the Fly.io runbook.
 
 ## Live Demo
 
-No hosted instance is currently running. Bring one up locally with the **Self-Host**
-command above, or deploy your own to Fly.io following [gateway/DEPLOY.md](gateway/DEPLOY.md).
+A real instance is running at **https://conductor-demo.fly.dev**, backed by Neon
+(Postgres + pgvector) and Upstash (Redis), talking to real OpenAI and Anthropic
+accounts.
+
+```python
+import openai
+client = openai.OpenAI(base_url="https://conductor-demo.fly.dev/v1", api_key="demo-key")
+print(client.chat.completions.create(model="fast", messages=[{"role":"user","content":"hello"}]).choices[0].message.content)
+```
+
+`demo-key` is a real, shared API key — not a rate-limited afterthought. It is
+**hard-capped at $10/month by the gateway's own budget enforcement**
+(`gateway/budgets/enforce.py`): once spend crosses the cap, requests are rejected
+with a 429 regardless of who's calling. The cap resets monthly. Use it to try
+streaming, caching, and failover for yourself; don't expect it to still have
+budget left if a lot of people have used it since this was written.
+
+See [gateway/DEPLOY.md](gateway/DEPLOY.md) for the Fly.io runbook if you want to
+deploy your own instance instead, or the **Self-Host** command above for a fully
+local instance with no shared budget.
 
 ---
 

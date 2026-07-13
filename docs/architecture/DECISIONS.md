@@ -392,3 +392,67 @@ These are dev-laptop numbers, not the deployed reference instance. The main READ
 carries an explicit interim note; FINAL numbers are still pending a re-measurement
 on the deployed Fly instance, which removes dev-laptop background-load noise as a
 variance source.
+
+---
+
+## Phase 6 — Fly.io deployment, budget-capped demo key (2026-07-13)
+
+### Demo/bench keys seeded via a new migration, not an admin endpoint
+Decision: `009_seed_demo_keys.sql` inserts `demo-key` ($10 hard cap) and `bench-key`
+($25 hard cap) the same way `005_seed_api_key.sql` seeds `dev-key` — raw value in a
+comment, `encode(sha256(...), 'hex')`, `ON CONFLICT (key_hash) DO NOTHING`.
+Rejected: building an admin endpoint/CLI to create API keys.
+Why: two keys, known in advance, needed once at deploy time — an admin surface
+(auth, validation, docs) is unjustified scope for that. A migration is append-only,
+auditable, and matches the existing `dev-key` precedent exactly. If key creation
+becomes a recurring operational need, that's the trigger to build the endpoint.
+
+### Benchmark methodology: SSH into the Fly VM and run the existing harness unmodified
+Decision: uploaded `bench/overhead.py`, `throughput.py`, `failover_bench.py` and
+their shared helpers to the live machine via `fly ssh sftp put`, and ran them via
+`fly ssh console -C "..."` against the gateway process already listening on
+`localhost:8000` there — the same process real traffic hits.
+Rejected: adding a `--base-url` flag to run the scripts from a laptop against the
+public URL; skipping re-benchmarking and keeping the dev-laptop numbers as final.
+Why: a `--base-url` variant changes the scripts (more surface to keep in sync with
+`bench/README.md`'s documented local-only design) and would need real provider
+calls or a publicly reachable mock, both worse than the existing mocked-provider
+methodology. Running the *existing* harness unmodified, in-process on the VM,
+required no code changes and produced numbers from the actual deployed
+hardware/network path. Cost: real environmental gaps to solve (no
+`host.docker.internal` DNS on a bare Firecracker VM, `BENCH_MOCK_KEY` missing from
+the live process's env since it's a compose-only var, and Fly's autostop killing
+the machine mid-run because loopback-only bench traffic is invisible to the
+edge-proxy connection count that autostop watches) — each is now documented as a
+Troubleshooting row in `gateway/DEPLOY.md`.
+
+### `cache_bench.py --mode=gateway` is unsafe against the live instance — skip it, don't adapt it
+Decision: did not re-measure cache hit rate on the deployed instance. The
+dev-laptop figure (25.0%, from Phase 5C) stands as the correctness benchmark.
+Rejected: running `cache_bench.py --mode=gateway` against `conductor-demo` anyway;
+patching it to skip the reset step for a "safer" partial run.
+Why: that script calls `redis.flushdb()` (wipes the entire Redis DB) and an
+unscoped `DELETE FROM semantic_cache` to guarantee a clean slate — correct for a
+disposable local stack, destructive against a shared live one. Budget counters
+(`budget:{api_key_id}:{YYYY-MM}`) live in the same Redis keyspace, so a flush would
+also reset `demo-key`'s and `bench-key`'s spend to zero — an unrelated feature
+(budget enforcement) silently corrupted by a benchmark run. Patching the script to
+avoid the reset would measure a different, uncontrolled cache state, not a
+comparable number. Skipping it and documenting why (both in `gateway/DEPLOY.md` and
+the README's Benchmark Results section) is more honest than a number that isn't
+actually comparable to the 0.92-placeholder-era measurement.
+
+### Fly secrets set is atomic per-invocation; export and set must happen in one shell call
+Decision: `DATABASE_URL`/`REDIS_URL`/`OPENAI_API_KEY`/`ANTHROPIC_API_KEY` are all
+exported and passed to a single `fly secrets set` command in one shell invocation.
+Rejected: exporting variables in one command/session and referencing them in a
+later, separate one (as happens naturally when an agent or script runs each line
+as its own subprocess).
+Why: discovered the hard way — a split invocation sends `fly secrets set` empty
+strings for every secret, which succeeds silently (no error) and only surfaces
+later as a crash-loop against `127.0.0.1:5432` (the pydantic-settings default) once
+the machine tries to boot against a DB that isn't configured. `fly secrets list`
+showing identical digests for `DATABASE_URL` and `REDIS_URL` (both hashing to the
+same empty value) was the actual tell. Documented as the first Troubleshooting row
+in `gateway/DEPLOY.md` since it's the failure mode most likely to recur for anyone
+following the runbook with tooling that splits commands across processes.
