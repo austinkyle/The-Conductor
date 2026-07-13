@@ -74,46 +74,76 @@ These are the four decisions that shaped the design. Each one had a real alterna
 
 ## Benchmark Results
 
-**Final note:** the numbers below (overhead, throughput, failover) were re-measured
-directly on the deployed Fly instance — `bench/overhead.py`, `bench/throughput.py`,
-and `bench/failover_bench.py` were uploaded via `fly ssh sftp` and run over an SSH
-session against the live `conductor-demo` machine (shared-cpu-1x, 1 GiB, `sjc`),
-hitting the same already-running gateway process real users hit. The mocked-provider
-methodology is unchanged (see `bench/README.md`) — only the hardware and network path
-changed. The dev-laptop numbers from the first measurement round are retained below
-for comparison; they are **not** the same run environment and should not be read as
-"the gateway got 60x slower" — see the note under the table.
+**Final note:** the numbers below are the deployed-reference run — all four
+benchmarks (overhead, throughput, cache, failover) measured **authenticated as
+`bench-key`** directly on the live `conductor-demo` Fly instance
+(`shared-cpu-1x`, 1 GiB RAM, region `sjc`, `GATEWAY_WORKERS=1`, Postgres=Neon,
+Redis=Upstash, both reached over the public internet). Scripts were uploaded
+via `fly ssh sftp` and run over SSH against the same already-running gateway
+process real traffic hits — see [`bench/reports/bench-20260713-deployed-reference.md`](bench/reports/bench-20260713-deployed-reference.md)
+for the full run config and per-benchmark source reports, and
+`gateway/DEPLOY.md` to reproduce it yourself. The mocked-provider methodology
+is unchanged (see `bench/README.md`) — only the hardware, network path, and
+auth mode changed. The dev-laptop numbers from the first measurement round are
+retained below for comparison; they are **not** the same run environment and
+should not be read as "the gateway got slower" — see the notes under the table.
 
-| Benchmark | Dev laptop (first measurement) | Deployed Fly instance (final) |
+| Benchmark | Dev laptop (first measurement) | Deployed Fly instance, bench-key auth (final) |
 |---|---|---|
-| Overhead p50 | ~3.6 ms added over direct provider call | ~216 ms added |
-| Overhead p95 | ~8.0 ms added | ~224 ms added |
-| Overhead p99 | ~12.0 ms added | ~255 ms added |
-| Cache hit rate | 25.0% (50/200 exact hits under bench corpus) | not re-measured on this instance (see note) |
-| Failover success rate | 100% (200/200 when primary returns 503) | 100% (200/200); depth=1 latency p50 576 ms |
-| Throughput peak | ~634 RPS, single worker, saturation at ~10 concurrent | ~44 RPS, single worker, saturation at ~20 concurrent |
+| Overhead p50 | ~3.6 ms added over direct provider call | 483.3 ms added |
+| Overhead p95 | ~8.0 ms added | 503.0 ms added |
+| Overhead p99 | ~12.0 ms added | 634.8 ms added |
+| Cache hit rate | 25.0% (50/200 exact hits under bench corpus) | 25.0% exact + 3.0% semantic (200-request corpus) |
+| Cache hit vs miss latency | not measured in this round | p50 124.0 ms (hit) vs 457.5 ms (miss) |
+| Failover success rate | 100% (200/200 when primary returns 503) | 100% (200/200); depth=1 latency p50 638.0 ms |
+| Throughput peak | ~634 RPS, single worker, saturation at ~10 concurrent | 20.5 RPS mean, single worker, saturation at ~20 concurrent |
 
-Reports: [`bench-20260713-163439-overhead.md`](bench/reports/bench-20260713-163439-overhead.md), [`bench-20260713-163758-throughput.md`](bench/reports/bench-20260713-163758-throughput.md), [`bench-20260713-fly-failover.md`](bench/reports/bench-20260713-fly-failover.md).
+Reports: [`bench-20260713-175446-overhead.md`](bench/reports/bench-20260713-175446-overhead.md), [`bench-20260713-180139-throughput.md`](bench/reports/bench-20260713-180139-throughput.md), [`bench-20260713-cache.md`](bench/reports/bench-20260713-cache.md), [`bench-20260713-failover.md`](bench/reports/bench-20260713-failover.md) — or the consolidated [`bench-20260713-deployed-reference.md`](bench/reports/bench-20260713-deployed-reference.md).
 
-**Why overhead and throughput look worse on Fly, not better:** the dev-laptop run had
-Postgres and Redis on loopback (sub-millisecond). The deployed instance's Postgres
-(Neon) and Redis (Upstash) are managed services reached over the public internet from
-a `sjc` VM — every request pays real round-trip latency to both on the cache-check and
-request-log write paths, which the local run couldn't see. This is an honest,
-structural cost of the managed-services deployment topology, not a regression in the
-gateway's own code — the mocked-provider methodology (isolating *added* latency from
-provider latency) is identical in both runs. Reducing it would mean colocating the
-gateway with its Postgres/Redis (e.g. Fly Postgres/Redis in the same region), which is
-future work, not this deployment's goal.
+**Why overhead and throughput look worse on Fly than on a dev laptop:** the
+dev-laptop run had Postgres and Redis on loopback (sub-millisecond). The
+deployed instance's Postgres (Neon) and Redis (Upstash) are managed services
+reached over the public internet from a `sjc` VM — every request pays real
+round-trip latency to both on the cache-check and request-log write paths,
+which the local run couldn't see. This is an honest, structural cost of the
+managed-services deployment topology, not a regression in the gateway's own
+code — the mocked-provider methodology (isolating *added* latency from
+provider latency) is identical in both runs. Reducing it would mean colocating
+the gateway with its Postgres/Redis (e.g. Fly Postgres/Redis in the same
+region), which is future work, not this deployment's goal.
 
-**Cache hit rate** was intentionally **not** re-run on the deployed instance:
-`bench/cache_bench.py --mode=gateway` calls `redis.flushdb()` and
-`DELETE FROM semantic_cache` to start from a clean slate — safe against a disposable
-local stack, but against the shared live instance it would wipe the real exact-cache
+**Why the Fly numbers above are also worse than an earlier same-day Fly run:**
+an earlier round measured these same benchmarks on this instance **anonymously**
+(no `Authorization` header) and got better numbers (overhead p50 ~216 ms, peak
+RPS ~44, failover depth=1 p50 576 ms). Those numbers weren't wrong, but they
+weren't honest about what a real API consumer experiences: none of the bench
+scripts sent an `Authorization` header, so that run skipped the budget-check
+round trip (`resolve_api_key` + `check_budget`/`record_spend`, hitting Neon and
+Upstash over the public internet) that every authenticated request actually
+pays. The numbers in the table above are from the `bench-key`-authenticated
+re-run and supersede the anonymous ones as the reference figures.
+
+**Cache hit rate and hit-vs-miss latency** are now measured directly on the
+deployed instance for the first time. The original harness's
+`cache_bench.py --mode=gateway` reset step called `redis.flushdb()` and an
+unscoped `DELETE FROM semantic_cache` — safe against a disposable local stack,
+but against the shared live instance it would have wiped real exact-cache
 entries and, because budget counters live in the same Redis keyspace
-(`budget:{api_key_id}:{YYYY-MM}`), reset `demo-key`'s and `bench-key`'s spend back to
-zero. That's not worth a benchmark number. The dev-laptop hit-rate figure stands as
-the correctness benchmark; it measures cache logic, not this deployment's hardware.
+(`budget:{api_key_id}:{YYYY-MM}`), reset `demo-key`'s and `bench-key`'s real
+spend back to zero. The script was changed to reset non-destructively instead:
+exact-cache Redis keys are deleted by their exact hash (only the keys this run
+itself writes) and `semantic_cache` rows are deleted by `model = 'bench-cache'`
+only — no `flushdb`, no unscoped `DELETE`. That made it safe to run live; see
+`bench/cache_bench.py` and `bench/README.md` for the implementation.
+
+**Sanity check:** every bench-key number above is worse than (or, for cache
+hit rate, roughly consistent with) the earlier anonymous run — expected, since
+auth adds a real budget-check round trip an anonymous request skips. The one
+number that looks "good," cache hit latency being lower than miss latency, has
+an obvious structural explanation (a hit skips the mock-provider round trip
+entirely) rather than being a surprise, so nothing here was re-run. `bench-key`'s
+own spend stayed at $0.0000 after the full run (bench models are seeded
+without pricing, so `cost_cents` is always 0 for bench traffic).
 
 **Methodology:** Cache bypassed for overhead and throughput benches (`cache: {no_cache: true}`). Failover ran against the deployed instance's default `FALLBACK_BACKOFF_BASE_MS=500` (production config, not the local `=0` speed setting), so the depth=1 latency above includes one real 500 ms backoff sleep per request — that's expected chain-walk behavior, not overhead. Semantic-similarity-threshold sweep (`--mode=similarity`) is a measurement of embedding-model quality, not hardware, so the existing report stands unchanged.
 

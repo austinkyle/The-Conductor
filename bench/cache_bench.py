@@ -22,6 +22,7 @@ Prerequisites:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import sys
@@ -33,6 +34,7 @@ import httpx
 import redis.asyncio as aioredis
 
 sys.path.insert(0, str(Path(__file__).parent))
+from _config import auth_headers
 from _db import cleanup_bench_alias, seed_bench_provider
 from _mock_server import start_mock_provider
 
@@ -149,6 +151,31 @@ async def embed_batch(
     return embeddings
 
 
+def _pct(data: list[float], p: float) -> float:
+    if not data:
+        return float("nan")
+    s = sorted(data)
+    idx = (len(s) - 1) * p / 100.0
+    lo, hi = int(idx), min(int(idx) + 1, len(s) - 1)
+    return s[lo] + (s[hi] - s[lo]) * (idx - lo)
+
+
+def _exact_cache_keys(alias: str) -> list[str]:
+    """SHA-256 exact-cache key for every unique prompt this bench will send.
+
+    Mirrors gateway/cache/exact.py's normalize+request_hash (volatile keys
+    stripped, sorted-key JSON) without importing the gateway package — the
+    payloads this script sends never include the volatile keys anyway, so
+    this is a direct reimplementation, not an approximation.
+    """
+    keys = []
+    for prompt in set(CORPUS):
+        body = {"model": alias, "messages": [{"role": "user", "content": prompt}]}
+        normalized = json.dumps(body, sort_keys=True, separators=(",", ":"))
+        keys.append(hashlib.sha256(normalized.encode()).hexdigest())
+    return keys
+
+
 async def run_gateway_mode(db_url: str, redis_url: str) -> None:
     conn = await asyncpg.connect(db_url)
     r = aioredis.from_url(redis_url)
@@ -157,9 +184,14 @@ async def run_gateway_mode(db_url: str, redis_url: str) -> None:
         conn, provider_name=_PROVIDER_NAME, alias=_ALIAS, base_url=_MOCK_BASE_URL
     )
 
-    # Flush caches so every run starts from zero.
-    await conn.execute("DELETE FROM semantic_cache")
-    await r.flushdb()
+    # Reset only this bench's own prior state, scoped so it's safe against a shared
+    # live instance: exact-cache keys are deleted by exact hash (never touches
+    # budget:* keys or other aliases' entries), semantic_cache rows are deleted by
+    # model=_ALIAS (rows are already scoped by model column).
+    exact_keys = _exact_cache_keys(_ALIAS)
+    if exact_keys:
+        await r.delete(*exact_keys)
+    await conn.execute("DELETE FROM semantic_cache WHERE model = $1", _ALIAS)
 
     start_ts = datetime.now(tz=timezone.utc)
 
@@ -169,13 +201,13 @@ async def run_gateway_mode(db_url: str, redis_url: str) -> None:
             print(f"Sending {len(CORPUS)} requests (unique→exact-dup→paraphrases)…")
             for i, prompt in enumerate(CORPUS):
                 payload = _make_payload(prompt, _ALIAS)
-                resp = await client.post(_GATEWAY_URL, json=payload)
+                resp = await client.post(_GATEWAY_URL, json=payload, headers=auth_headers())
                 resp.raise_for_status()
                 if (i + 1) % 50 == 0:
                     print(f"  {i + 1}/{len(CORPUS)}")
         rows = await conn.fetch(
             """
-            SELECT cache_status, prompt_tokens, completion_tokens
+            SELECT cache_status, prompt_tokens, completion_tokens, latency_ms
             FROM requests
             WHERE requested_model = $1
               AND created_at >= $2
@@ -194,10 +226,13 @@ async def run_gateway_mode(db_url: str, redis_url: str) -> None:
     cost_saved_cents = 0.0
     INPUT_PRICE = 0.15 / 1_000_000  # $/token (gpt-4o-mini equivalent)
     OUTPUT_PRICE = 0.60 / 1_000_000
+    latencies_by_status: dict[str, list[float]] = {"exact_hit": [], "semantic_hit": [], "miss": []}
 
     for row in rows:
         cs = row["cache_status"] or "miss"
         counts[cs] = counts.get(cs, 0) + 1
+        if row["latency_ms"] is not None and cs in latencies_by_status:
+            latencies_by_status[cs].append(float(row["latency_ms"]))
         if cs in ("exact_hit", "semantic_hit"):
             pt = row["prompt_tokens"] or 0
             ct = row["completion_tokens"] or 0
@@ -211,6 +246,14 @@ async def run_gateway_mode(db_url: str, redis_url: str) -> None:
         table_rows.append(f"| {status:<13} | {n:<5} | {pct:.1f}% |")
 
     hits = counts.get("exact_hit", 0) + counts.get("semantic_hit", 0)
+
+    hit_latencies = latencies_by_status["exact_hit"] + latencies_by_status["semantic_hit"]
+    miss_latencies = latencies_by_status["miss"]
+    latency_rows = "\n".join(
+        f"| p{p:<9} | {_pct(hit_latencies, p):<12.1f} | {_pct(miss_latencies, p):<12.1f} |"
+        for p in (50, 95, 99)
+    )
+
     report = f"""\
 ## Cache Benchmark — {date.today().isoformat()}
 
@@ -223,6 +266,15 @@ Corpus: {len(UNIQUE)} unique + {len(UNIQUE)} exact-duplicate + {len(PARAPHRASES)
 
 Cost reduction: {cost_saved_cents:.2f}¢ saved on {hits} cache hits
 (based on gpt-4o-mini pricing of $0.15/$0.60 per Mtok)
+
+### Hit vs miss latency (gateway DB column latency_ms)
+| Percentile | Hit (exact+semantic, ms) | Miss (ms) |
+|------------|--------------------------|-----------|
+{latency_rows}
+
+Auth: {"bench-key" if os.environ.get("GATEWAY_API_KEY") else "anonymous"}. Reset scope: exact-cache
+keys deleted by hash, semantic_cache rows deleted by `model = '{_ALIAS}'` only —
+non-destructive against a shared instance (no `flushdb`, no unscoped `DELETE`).
 
 Methodology: paraphrase corpus hand-crafted to test semantic similarity;
 gateway mode uses the live gateway with threshold from SEMANTIC_SIMILARITY_THRESHOLD env var.

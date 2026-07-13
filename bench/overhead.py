@@ -32,7 +32,7 @@ import asyncpg
 import httpx
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _config import format_config, mean, run_config, stdev
+from _config import auth_headers, format_config, mean, run_config, stdev
 from _db import cleanup_bench_alias, seed_bench_provider
 from _mock_server import start_mock_provider
 
@@ -66,11 +66,13 @@ def _pct(data: list[float], p: float) -> float:
     return s[lo] + (s[hi] - s[lo]) * (idx - lo)
 
 
-async def _bench(client: httpx.AsyncClient, url: str, payload: dict, n: int) -> list[float]:
+async def _bench(
+    client: httpx.AsyncClient, url: str, payload: dict, n: int, headers: dict[str, str] | None = None
+) -> list[float]:
     times: list[float] = []
     for _ in range(n):
         t0 = time.perf_counter()
-        r = await client.post(url, json=payload)
+        r = await client.post(url, json=payload, headers=headers)
         r.raise_for_status()
         times.append((time.perf_counter() - t0) * 1000.0)
     return times
@@ -78,14 +80,15 @@ async def _bench(client: httpx.AsyncClient, url: str, payload: dict, n: int) -> 
 
 async def _run_trial(client: httpx.AsyncClient, trial_idx: int) -> dict[str, tuple[float, float]]:
     """Runs one full warmup+measure cycle. Returns {percentile: (direct_ms, gateway_ms)}."""
+    gw_headers = auth_headers()
     print(f"  Trial {trial_idx}: warmup ({_WARMUP_N} req each, discarded)…")
     await _bench(client, _DIRECT_URL, _DIRECT_PAYLOAD, _WARMUP_N)
-    await _bench(client, _GATEWAY_URL, _GATEWAY_PAYLOAD, _WARMUP_N)
+    await _bench(client, _GATEWAY_URL, _GATEWAY_PAYLOAD, _WARMUP_N, headers=gw_headers)
 
     print(f"  Trial {trial_idx}: direct baseline ({_N} sequential)…")
     direct = await _bench(client, _DIRECT_URL, _DIRECT_PAYLOAD, _N)
     print(f"  Trial {trial_idx}: gateway ({_N} sequential)…")
-    gw = await _bench(client, _GATEWAY_URL, _GATEWAY_PAYLOAD, _N)
+    gw = await _bench(client, _GATEWAY_URL, _GATEWAY_PAYLOAD, _N, headers=gw_headers)
 
     return {f"p{p}": (_pct(direct, p), _pct(gw, p)) for p in (50, 95, 99)}
 
@@ -121,7 +124,11 @@ async def main() -> None:
 
     cfg = run_config(
         trials=_TRIALS, warmup_n=_WARMUP_N, n_per_trial=_N,
-        extra={"gateway_url": _GATEWAY_URL, "provider": "local mock (instant response)"},
+        extra={
+            "gateway_url": _GATEWAY_URL,
+            "provider": "local mock (instant response)",
+            "auth": "bench-key" if os.environ.get("GATEWAY_API_KEY") else "anonymous",
+        },
     )
 
     table = "\n".join(

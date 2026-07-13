@@ -79,6 +79,12 @@ def run_config(*, trials: int, warmup_n: int, n_per_trial: int, extra: dict | No
     return cfg
 
 
+def auth_headers() -> dict[str, str]:
+    """Authorization header for gateway requests, from GATEWAY_API_KEY (unset = anonymous)."""
+    key = os.environ.get("GATEWAY_API_KEY")
+    return {"Authorization": f"Bearer {key}"} if key else {}
+
+
 def format_config(cfg: dict) -> str:
     lines = "\n".join(f"- {k}: {v}" for k, v in cfg.items())
     return f"### Run configuration\n{lines}\n"

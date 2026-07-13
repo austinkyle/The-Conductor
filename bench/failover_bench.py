@@ -29,6 +29,7 @@ import asyncpg
 import httpx
 
 sys.path.insert(0, str(Path(__file__).parent))
+from _config import auth_headers
 from _db import cleanup_bench_alias, seed_bench_provider
 from _mock_server import start_mock_provider
 
@@ -94,7 +95,7 @@ async def main() -> None:
             for i in range(_N):
                 t0 = time.perf_counter()
                 try:
-                    r = await client.post(_GATEWAY_URL, json=payload)
+                    r = await client.post(_GATEWAY_URL, json=payload, headers=auth_headers())
                     r.raise_for_status()
                     client_latencies.append((time.perf_counter() - t0) * 1000.0)
                 except Exception as exc:
@@ -168,7 +169,8 @@ Latency (successful requests, from gateway DB column latency_ms):
 
 Methodology: local mock servers on loopback; set FALLBACK_BACKOFF_BASE_MS=0 in the
 gateway environment for accurate failover-only overhead (without backoff sleep noise).
-Cache bypassed via `"cache": {{"no_cache": true}}` on all requests.
+Cache bypassed via `"cache": {{"no_cache": true}}` on all requests. Auth:
+{"bench-key" if os.environ.get("GATEWAY_API_KEY") else "anonymous"}.
 """
 
     out = Path(__file__).parent / "reports"

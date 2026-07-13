@@ -76,11 +76,30 @@ python bench/cache_bench.py --mode=gateway
 Requires a live `OPENAI_API_KEY` only for `--mode=similarity` (semantic
 threshold sweep); `--mode=gateway` (exact-cache hit rate) does not.
 
+Its pre-run reset is scoped, not destructive: exact-cache Redis keys are
+deleted by exact hash (only the ones this run itself will write — never
+`budget:*` counters or unrelated entries), and `semantic_cache` rows are
+deleted by `model = 'bench-cache'` only. Safe to run against a shared or live
+instance, not just a disposable local stack.
+
+Report includes hit-vs-miss latency (from the gateway's `latency_ms` DB
+column) alongside hit rate.
+
 ## Failover (`bench/failover_bench.py`)
 
 ```bash
 FALLBACK_BACKOFF_BASE_MS=0 python bench/failover_bench.py
 ```
+
+## Running authenticated (against a real API key)
+
+All four scripts default to anonymous requests (no `Authorization` header),
+matching local dev where auth enforcement is often not the thing under test.
+Set `GATEWAY_API_KEY` to send every gateway-bound request with that key, e.g.
+`GATEWAY_API_KEY=bench-key python bench/overhead.py`. Each report records
+which mode (`bench-key` / `anonymous`) it ran in. Prefer an authenticated run
+when measuring numbers a real API consumer would experience — anonymous
+requests skip the budget-check Redis/DB round trip and understate overhead.
 
 ## Reproducibility bar
 

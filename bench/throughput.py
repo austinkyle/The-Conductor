@@ -37,7 +37,7 @@ import asyncpg
 import httpx
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _config import format_config, mean, run_config, stdev
+from _config import auth_headers, format_config, mean, run_config, stdev
 from _db import cleanup_bench_alias, seed_bench_provider
 from _mock_server import start_mock_provider
 
@@ -76,7 +76,7 @@ async def _level(client: httpx.AsyncClient, concurrency: int, n: int) -> tuple[f
     async def one() -> None:
         async with sem:
             t0 = time.perf_counter()
-            r = await client.post(_GATEWAY_URL, json=_PAYLOAD)
+            r = await client.post(_GATEWAY_URL, json=_PAYLOAD, headers=auth_headers())
             r.raise_for_status()
             ms = (time.perf_counter() - t0) * 1000.0
             async with lock:
@@ -159,6 +159,7 @@ async def main() -> None:
             "httpx_max_connections": _MAX_CONNECTIONS,
             "httpx_max_keepalive_connections": _MAX_KEEPALIVE,
             "provider": "local mock (instant response)",
+            "auth": "bench-key" if os.environ.get("GATEWAY_API_KEY") else "anonymous",
         },
     )
 

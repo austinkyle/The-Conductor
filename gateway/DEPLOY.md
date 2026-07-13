@@ -148,18 +148,18 @@ restore `base_url`.
 
 ## Running the `bench/` benchmark harness against this instance
 
-`bench/overhead.py` / `bench/throughput.py` / `bench/failover_bench.py` are
-built for `docker compose` + a local mock provider (see `bench/README.md`),
-not a remote target — there's no `--base-url` flag. They *can* still produce
-an honest "measured on this instance" number, by running unmodified **on the
-Fly VM itself** against the gateway process already listening on
-`localhost:8000` there:
+`bench/overhead.py` / `bench/throughput.py` / `bench/cache_bench.py` /
+`bench/failover_bench.py` are built for `docker compose` + a local mock
+provider (see `bench/README.md`), not a remote target — there's no
+`--base-url` flag. They *can* still produce an honest "measured on this
+instance" number, by running unmodified **on the Fly VM itself** against the
+gateway process already listening on `localhost:8000` there:
 
 ```bash
 # One-time per machine: get the scripts onto it (ephemeral disk — redo after
 # any redeploy or restart).
 fly ssh console -a conductor-demo -C "mkdir -p /app/bench"
-for f in overhead.py throughput.py failover_bench.py _config.py _db.py _mock_server.py; do
+for f in overhead.py throughput.py cache_bench.py failover_bench.py _config.py _db.py _mock_server.py; do
   fly ssh sftp put "bench/$f" "/app/bench/$f" -a conductor-demo
 done
 
@@ -181,21 +181,31 @@ fly secrets set BENCH_MOCK_KEY=bench-dummy-000 --app conductor-demo
 ( while true; do curl -s -o /dev/null https://conductor-demo.fly.dev/health; sleep 3; done ) &
 PINGER=$!
 
-fly ssh console -a conductor-demo -C "sh -c 'cd /app && . .venv/bin/activate && python bench/overhead.py'"
-fly ssh console -a conductor-demo -C "sh -c 'cd /app && . .venv/bin/activate && python bench/throughput.py'"
-fly ssh console -a conductor-demo -C "sh -c 'cd /app && . .venv/bin/activate && python bench/failover_bench.py'"
+fly ssh console -a conductor-demo -C "sh -c 'cd /app && . .venv/bin/activate && GATEWAY_API_KEY=bench-key python bench/overhead.py'"
+fly ssh console -a conductor-demo -C "sh -c 'cd /app && . .venv/bin/activate && GATEWAY_API_KEY=bench-key python bench/throughput.py'"
+fly ssh console -a conductor-demo -C "sh -c 'cd /app && . .venv/bin/activate && GATEWAY_API_KEY=bench-key python bench/cache_bench.py --mode=gateway'"
+fly ssh console -a conductor-demo -C "sh -c 'cd /app && . .venv/bin/activate && GATEWAY_API_KEY=bench-key python bench/failover_bench.py'"
 
 kill $PINGER
 fly ssh sftp get /app/bench/reports/<report>.md bench/reports/<report>.md -a conductor-demo
 fly secrets unset BENCH_MOCK_KEY --app conductor-demo
 ```
 
-Do **not** run `bench/cache_bench.py --mode=gateway` against this instance —
-it calls `redis.flushdb()` and `DELETE FROM semantic_cache` to start from a
-clean slate, which is safe against a disposable local stack but would wipe the
-live instance's real cache state and, since budget counters live in the same
-Redis keyspace (`budget:{api_key_id}:{YYYY-MM}`), reset `demo-key`'s and
-`bench-key`'s spend to zero. Run that one locally only.
+`GATEWAY_API_KEY=bench-key` sends every gateway-bound bench request through
+the budget-capped `bench-key` (see `bench/README.md`'s "Running authenticated"
+section) instead of anonymously — the honest number for what a real API
+consumer experiences, since auth pays a real budget-check round trip
+anonymous requests skip. Bench models are seeded without pricing, so
+`cost_cents` is 0 for all bench traffic regardless of volume — this can't run
+`bench-key`'s spend anywhere near its cap.
+
+`bench/cache_bench.py --mode=gateway`'s pre-run reset is scoped, not
+destructive: exact-cache Redis keys are deleted by exact hash (only the keys
+this run itself will write, never `budget:{api_key_id}:{YYYY-MM}` counters or
+unrelated entries) and `semantic_cache` rows are deleted by
+`model = 'bench-cache'` only. It's safe to run against this shared live
+instance, unlike the naive `flushdb()`/unscoped `DELETE` this script used to
+run.
 
 Expect the overhead/throughput numbers measured this way to look *worse* than
 a local docker-compose run, not better — Neon and Upstash are reached over the
