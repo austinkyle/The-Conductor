@@ -257,7 +257,7 @@ async def run_gateway_mode(db_url: str, redis_url: str) -> None:
     report = f"""\
 ## Cache Benchmark — {date.today().isoformat()}
 
-### Hit Rate (gateway mode, threshold=0.92)
+### Hit Rate (gateway mode; semantic threshold = gateway's SEMANTIC_SIMILARITY_THRESHOLD, not recorded by this script)
 Corpus: {len(UNIQUE)} unique + {len(UNIQUE)} exact-duplicate + {len(PARAPHRASES)} semantic-paraphrase = {len(CORPUS)} requests
 
 | cache_status  | count | %     |
