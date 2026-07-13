@@ -31,7 +31,7 @@ from cache.exact import _VOLATILE_KEYS
 from cache.guardrails import should_bypass
 from cache.replay import assembled_to_response, synthetic_stream
 from core import streaming
-from core.config import get_settings
+from core.config import Settings, get_settings
 from core.request import GatewayRequest
 from db.models import ApiKey, Model, Provider
 from db.queries import insert_request, update_request_usage
@@ -106,6 +106,99 @@ def _candidate_setup(a: Attempt, body: JSON) -> tuple[Adapter, str, JSON]:
         "model": a.model.provider_model
     }
     return adapter, key, out_body
+
+
+async def _insert_cache_hit(
+    conn: asyncpg.Connection,
+    req: GatewayRequest,
+    key: ApiKey | None,
+    t0: float,
+    cache_status: str,
+    cached: JSON,
+) -> None:
+    latency_ms = int((time.monotonic() - t0) * 1000)
+    pt, ct, tt = _usage_tokens(cached)
+    await insert_request(
+        conn,
+        requested_model=req.model,
+        served_provider_id=None,
+        served_model=None,
+        status="success",
+        error_class=None,
+        fallback_depth=0,
+        cache_status=cache_status,
+        api_key_id=key.id if key else None,
+        prompt_tokens=pt,
+        completion_tokens=ct,
+        total_tokens=tt,
+        cost_cents=Decimal("0"),
+        latency_ms=latency_ms,
+    )
+
+
+async def _cache_lookup(
+    conn: asyncpg.Connection,
+    http: httpx.AsyncClient,
+    r: aioredis.Redis[str],  # type: ignore[type-arg]
+    body: JSON,
+    req: GatewayRequest,
+    s: Settings,
+    t0: float,
+    key: ApiKey | None,
+) -> tuple[str, list[float] | None, JSON | None]:
+    """Exact-then-semantic cache lookup, shared by both the streaming and
+    non-streaming branches. On a hit, writes the request row and returns the
+    cached response. On a miss, returns the hash/embedding so the caller can
+    reuse them for the write-back after the upstream call completes."""
+    h = exact.request_hash(body)
+    cached = await exact.get(r, h)
+    if cached is not None:
+        await _insert_cache_hit(conn, req, key, t0, "exact_hit", cached)
+        return h, None, cached
+
+    embedding: list[float] | None = None
+    text = semantic.embed_text(body)
+    if len(text) >= s.semantic_cache_min_chars:
+        try:
+            embedding = await semantic.embed(http, text)
+        except Exception:
+            pass  # embedding service unavailable — treat as miss, proceed
+
+    if embedding is not None:
+        cached_sem = await semantic.lookup(
+            conn,
+            embedding,
+            requested_model=req.model,
+            threshold=s.semantic_similarity_threshold,
+        )
+        if cached_sem is not None:
+            await _insert_cache_hit(conn, req, key, t0, "semantic_hit", cached_sem)
+            return h, embedding, cached_sem
+
+    return h, embedding, None
+
+
+async def _cache_write(
+    conn: asyncpg.Connection,
+    r: aioredis.Redis[str],  # type: ignore[type-arg]
+    s: Settings,
+    h: str,
+    embedding: list[float] | None,
+    response: JSON,
+    requested_model: str,
+) -> None:
+    await exact.put(r, h, response, s.exact_cache_ttl_seconds)
+    if embedding is not None:
+        try:
+            await semantic.store(
+                conn,
+                request_hash=h,
+                embedding=embedding,
+                response=response,
+                requested_model=requested_model,
+            )
+        except Exception:
+            pass  # cache write is best-effort — must never fail an already-billed response
 
 
 def _backoff(depth: int) -> float:
@@ -214,62 +307,9 @@ async def proxy_chat_completion(
     embedding: list[float] | None = None
 
     if not bypass:
-        h = exact.request_hash(body)
-        cached = await exact.get(r, h)
+        h, embedding, cached = await _cache_lookup(conn, http, r, body, req, s, t0, key)
         if cached is not None:
-            latency_ms = int((time.monotonic() - t0) * 1000)
-            pt, ct, tt = _usage_tokens(cached)
-            await insert_request(
-                conn,
-                requested_model=req.model,
-                served_provider_id=None,
-                served_model=None,
-                status="success",
-                error_class=None,
-                fallback_depth=0,
-                cache_status="exact_hit",
-                api_key_id=key.id if key else None,
-                prompt_tokens=pt,
-                completion_tokens=ct,
-                total_tokens=tt,
-                cost_cents=Decimal("0"),
-                latency_ms=latency_ms,
-            )
             return cached
-
-        text = semantic.embed_text(body)
-        if len(text) >= s.semantic_cache_min_chars:
-            try:
-                embedding = await semantic.embed(http, text)
-            except Exception:
-                pass  # embedding service unavailable — treat as miss, proceed
-        if embedding is not None:
-            cached_sem = await semantic.lookup(
-                conn,
-                embedding,
-                requested_model=req.model,
-                threshold=s.semantic_similarity_threshold,
-            )
-            if cached_sem is not None:
-                latency_ms = int((time.monotonic() - t0) * 1000)
-                pt, ct, tt = _usage_tokens(cached_sem)
-                await insert_request(
-                    conn,
-                    requested_model=req.model,
-                    served_provider_id=None,
-                    served_model=None,
-                    status="success",
-                    error_class=None,
-                    fallback_depth=0,
-                    cache_status="semantic_hit",
-                    api_key_id=key.id if key else None,
-                    prompt_tokens=pt,
-                    completion_tokens=ct,
-                    total_tokens=tt,
-                    cost_cents=Decimal("0"),
-                    latency_ms=latency_ms,
-                )
-                return cached_sem
 
     chain = await _resolve(conn, req)
 
@@ -319,18 +359,7 @@ async def proxy_chat_completion(
         await record_spend(r, key.id, cents)
 
     if not bypass:
-        await exact.put(r, h, result, s.exact_cache_ttl_seconds)
-        if embedding is not None:
-            try:
-                await semantic.store(
-                    conn,
-                    request_hash=h,
-                    embedding=embedding,
-                    response=result,
-                    requested_model=req.model,
-                )
-            except Exception:
-                pass  # cache write is best-effort — must never fail an already-billed response
+        await _cache_write(conn, r, s, h, embedding, result, req.model)
 
     return result
 
@@ -363,66 +392,11 @@ async def stream_chat_completion(
     embedding: list[float] | None = None
 
     if not bypass:
-        h = exact.request_hash(body)
-        cached = await exact.get(r, h)
+        h, embedding, cached = await _cache_lookup(conn, http, r, body, req, s, t0, key)
         if cached is not None:
-            latency_ms = int((time.monotonic() - t0) * 1000)
-            pt, ct, tt = _usage_tokens(cached)
-            await insert_request(
-                conn,
-                requested_model=req.model,
-                served_provider_id=None,
-                served_model=None,
-                status="success",
-                error_class=None,
-                fallback_depth=0,
-                cache_status="exact_hit",
-                api_key_id=key.id if key else None,
-                prompt_tokens=pt,
-                completion_tokens=ct,
-                total_tokens=tt,
-                cost_cents=Decimal("0"),
-                latency_ms=latency_ms,
-            )
             async for chunk in synthetic_stream(cached):
                 yield chunk
             return
-
-        text = semantic.embed_text(body)
-        if len(text) >= s.semantic_cache_min_chars:
-            try:
-                embedding = await semantic.embed(http, text)
-            except Exception:
-                pass  # embedding service unavailable — treat as miss, proceed
-        if embedding is not None:
-            cached_sem = await semantic.lookup(
-                conn,
-                embedding,
-                requested_model=req.model,
-                threshold=s.semantic_similarity_threshold,
-            )
-            if cached_sem is not None:
-                latency_ms = int((time.monotonic() - t0) * 1000)
-                pt, ct, tt = _usage_tokens(cached_sem)
-                await insert_request(
-                    conn,
-                    requested_model=req.model,
-                    served_provider_id=None,
-                    served_model=None,
-                    status="success",
-                    error_class=None,
-                    fallback_depth=0,
-                    cache_status="semantic_hit",
-                    api_key_id=key.id if key else None,
-                    prompt_tokens=pt,
-                    completion_tokens=ct,
-                    total_tokens=tt,
-                    cost_cents=Decimal("0"),
-                    latency_ms=latency_ms,
-                )
-                async for chunk in synthetic_stream(cached_sem):
-                    yield chunk
-                return
 
     chain = await _resolve(conn, req)
 
@@ -490,15 +464,4 @@ async def stream_chat_completion(
     # skips this block, so incomplete streams are never cached.
     if not bypass:
         response = assembled_to_response(req, req.model)
-        await exact.put(r, h, response, s.exact_cache_ttl_seconds)
-        if embedding is not None:
-            try:
-                await semantic.store(
-                    conn,
-                    request_hash=h,
-                    embedding=embedding,
-                    response=response,
-                    requested_model=req.model,
-                )
-            except Exception:
-                pass  # cache write is best-effort — must never fail an already-billed response
+        await _cache_write(conn, r, s, h, embedding, response, req.model)

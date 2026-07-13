@@ -17,6 +17,8 @@ import asyncpg
 import httpx
 import pytest
 
+from cache import exact, semantic
+from cache.guardrails import should_bypass
 from core import pipeline, streaming
 from core.config import get_settings
 from core.request import GatewayRequest
@@ -211,3 +213,156 @@ async def test_clean_openai_stream_from_both_providers() -> None:
         # The reconciled usage is visible in-band as a terminal usage chunk.
         usage_chunks = [c for c in chunks if "usage" in c]
         assert usage_chunks and usage_chunks[-1]["usage"] == _EXPECTED_USAGE
+
+
+# ---------------------------------------------------------------------------
+# Cache-check integration for the streaming branch: exact hit / semantic hit /
+# cache-write-after-close / bypass reasons. Mirrors test_proxy.py's cache tests
+# but asserts synthetic-stream replay + upstream-never-opened for hits, and that
+# the cache write happens only after the generator is fully drained.
+# ---------------------------------------------------------------------------
+
+class _RecordingInsert:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def __call__(self, conn: object, **kwargs: object) -> int:
+        self.calls.append(kwargs)
+        return 1
+
+
+def _cached_response() -> JSON:
+    return {
+        "id": "chatcmpl-cached",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "gpt-4o-mini",
+        "choices": [
+            {"index": 0, "message": {"role": "assistant", "content": "Cached!"}, "finish_reason": "stop"}
+        ],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7},
+    }
+
+
+async def _stream_with_cache(
+    monkeypatch: pytest.MonkeyPatch,
+    body: JSON,
+    *,
+    exact_hit: JSON | None = None,
+    semantic_hit: JSON | None = None,
+    upstream_called: list[bool] | None = None,
+) -> tuple[list[bytes], _RecordingInsert, list[JSON], list[object]]:
+    recorder = _RecordingInsert()
+    monkeypatch.setattr(pipeline, "insert_request", recorder)
+    monkeypatch.setattr(pipeline, "should_bypass", should_bypass)
+
+    async def fake_exact_get(r: object, h: str) -> JSON | None:
+        return exact_hit
+
+    put_calls: list[JSON] = []
+
+    async def fake_exact_put(r: object, h: str, response: JSON, ttl: int) -> None:
+        put_calls.append(response)
+
+    monkeypatch.setattr(exact, "get", fake_exact_get)
+    monkeypatch.setattr(exact, "put", fake_exact_put)
+
+    async def fake_embed(http: object, text: str) -> list[float]:
+        return [0.1, 0.2, 0.3]
+
+    async def fake_lookup(conn: object, embedding: object, *, requested_model: str, threshold: float) -> JSON | None:
+        return semantic_hit
+
+    store_calls: list[object] = []
+
+    async def fake_store(conn: object, **kwargs: object) -> None:
+        store_calls.append(kwargs)
+
+    monkeypatch.setattr(semantic, "embed", fake_embed)
+    monkeypatch.setattr(semantic, "lookup", fake_lookup)
+    monkeypatch.setattr(semantic, "store", fake_store)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if upstream_called is not None:
+            upstream_called.append(True)
+        headers = {"content-type": "text/event-stream"}
+        return httpx.Response(200, content=_sse_bytes_openai(), headers=headers)
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as http:
+        conn = cast(asyncpg.Connection, None)
+        frames = [
+            frame
+            async for frame in pipeline.stream_chat_completion(conn, http, None, body)  # type: ignore[arg-type]
+        ]
+    return frames, recorder, put_calls, store_calls
+
+
+def _base_stream_body() -> JSON:
+    return {"model": "gpt-4o-mini", "messages": [{"role": "user", "content": "Hi"}], "stream": True}
+
+
+async def test_stream_exact_hit_replays_synthetic_and_skips_upstream(monkeypatch: pytest.MonkeyPatch) -> None:
+    called: list[bool] = []
+    cached = _cached_response()
+    frames, recorder, put_calls, _ = await _stream_with_cache(
+        monkeypatch, _base_stream_body(), exact_hit=cached, upstream_called=called
+    )
+    assert called == []
+    combined = b"".join(frames).decode()
+    assert "Cached!" in combined
+    assert frames[-1] == b"data: [DONE]\n\n"
+    assert len(recorder.calls) == 1
+    assert recorder.calls[0]["cache_status"] == "exact_hit"
+    assert put_calls == []  # a hit never re-writes the cache
+
+
+async def test_stream_semantic_hit_after_exact_miss(monkeypatch: pytest.MonkeyPatch) -> None:
+    called: list[bool] = []
+    cached = _cached_response()
+    frames, recorder, put_calls, _ = await _stream_with_cache(
+        monkeypatch, _base_stream_body(), exact_hit=None, semantic_hit=cached, upstream_called=called
+    )
+    assert called == []
+    combined = b"".join(frames).decode()
+    assert "Cached!" in combined
+    assert len(recorder.calls) == 1
+    assert recorder.calls[0]["cache_status"] == "semantic_hit"
+    assert put_calls == []
+
+
+async def test_stream_true_miss_writes_cache_only_after_close(monkeypatch: pytest.MonkeyPatch) -> None:
+    called: list[bool] = []
+    frames, recorder, put_calls, store_calls = await _stream_with_cache(
+        monkeypatch, _base_stream_body(), exact_hit=None, semantic_hit=None, upstream_called=called
+    )
+    assert called == [True]
+    assert frames[-1] == b"data: [DONE]\n\n"
+    # cache_status="miss" is recorded at stream-open, before any content is known.
+    assert recorder.calls[0]["cache_status"] == "miss"
+    # cache write happens only once the generator (and thus the stream) is drained.
+    assert len(put_calls) == 1
+    assert put_calls[0]["choices"][0]["message"]["content"] == "Hello there!"  # type: ignore[index]
+    assert len(store_calls) == 1
+
+
+@pytest.mark.parametrize(
+    ("body_extra", "expected_reason"),
+    [
+        ({"temperature": 0.9}, "temperature"),
+        ({"cache": False}, "no_cache"),
+        ({"cache": {"no_cache": True}}, "no_cache"),
+        ({"cache": {"recent_context": True}}, "recent_context"),
+        ({"tools": [{"type": "function", "function": {"name": "f"}}]}, "tool_use"),
+    ],
+)
+async def test_stream_bypass_reason_recorded_as_cache_status(
+    monkeypatch: pytest.MonkeyPatch, body_extra: JSON, expected_reason: str
+) -> None:
+    called: list[bool] = []
+    body = {**_base_stream_body(), **body_extra}
+    _, recorder, put_calls, store_calls = await _stream_with_cache(monkeypatch, body, upstream_called=called)
+    assert called == [True]
+    assert recorder.calls[0]["cache_status"] == expected_reason
+    assert put_calls == []
+    assert store_calls == []
