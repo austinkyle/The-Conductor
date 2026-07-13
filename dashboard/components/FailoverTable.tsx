@@ -6,7 +6,7 @@ interface Props {
 
 export default function FailoverTable({ failovers }: Props) {
   return (
-    <div className="card">
+    <div>
       <h2 className="card-label">Failover events</h2>
       {failovers.length === 0 ? (
         <div className="empty-state">

@@ -1,5 +1,6 @@
 "use client";
 
+import { motion, useReducedMotion } from "framer-motion";
 import type { Window } from "../lib/api";
 
 interface Props {
@@ -15,6 +16,8 @@ const LABELS: Record<Window, string> = {
 };
 
 export default function WindowSelect({ value, onChange }: Props) {
+  const reduceMotion = useReducedMotion();
+
   return (
     <div className="segmented">
       {OPTIONS.map((w) => (
@@ -24,7 +27,18 @@ export default function WindowSelect({ value, onChange }: Props) {
           data-active={value === w}
           className="segmented-btn focus-ring"
         >
-          {LABELS[w]}
+          {value === w && (
+            <motion.span
+              layoutId="segmented-active-pill"
+              className="segmented-pill"
+              transition={
+                reduceMotion
+                  ? { duration: 0 }
+                  : { type: "spring", stiffness: 500, damping: 40 }
+              }
+            />
+          )}
+          <span className="segmented-btn-label">{LABELS[w]}</span>
         </button>
       ))}
     </div>

@@ -29,7 +29,7 @@ export default function SpendChart({ data }: Props) {
   }));
 
   return (
-    <div className="card">
+    <div>
       <h2 className="card-label">Spend over time</h2>
       {chartData.length === 0 ? (
         <div className="empty-state">
@@ -65,6 +65,7 @@ export default function SpendChart({ data }: Props) {
               stroke="var(--border)"
             />
             <Tooltip
+              cursor={{ stroke: "var(--accent)", strokeDasharray: "3 3" }}
               contentStyle={{
                 background: "var(--bg-surface)",
                 border: "1px solid var(--border)",

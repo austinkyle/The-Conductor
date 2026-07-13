@@ -66,6 +66,12 @@ body {
   margin-bottom: 32px;
 }
 
+.wordmark-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .wordmark {
   margin: 0;
   font-size: 13px;
@@ -73,6 +79,132 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.18em;
   color: var(--text-secondary);
+}
+
+/* Refresh sweep */
+
+.refresh-sweep-track {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: transparent;
+  z-index: 50;
+}
+
+.refresh-sweep-fill {
+  height: 100%;
+  background: var(--accent);
+  opacity: 0.5;
+  transform-origin: left;
+}
+
+/* Live status dot */
+
+.live-dot-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+}
+
+.live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.live-dot.is-down {
+  background: var(--error);
+}
+
+@keyframes live-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.live-dot.is-live {
+  animation: live-pulse 2s ease-in-out infinite;
+}
+
+/* Copy-to-clipboard tick */
+
+.copy-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+
+.copy-key:hover {
+  color: var(--accent);
+}
+
+.copy-tick {
+  color: var(--accent);
+  font-size: 11px;
+  font-family: var(--font-sans);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Latency bars (signature moment) */
+
+.latency-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 8px 0;
+}
+
+.latency-row {
+  display: grid;
+  grid-template-columns: 28px 1fr 56px;
+  align-items: center;
+  gap: 10px;
+}
+
+.latency-row-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+.latency-row-track {
+  height: 8px;
+  background: var(--bg-elevated);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.latency-row-fill {
+  height: 100%;
+  border-radius: 4px;
+}
+
+.latency-row-value {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Segmented control */
@@ -87,6 +219,7 @@ body {
 }
 
 .segmented-btn {
+  position: relative;
   padding: 6px 14px;
   border-radius: 6px;
   border: none;
@@ -99,9 +232,21 @@ body {
 }
 
 .segmented-btn[data-active="true"] {
-  background: var(--bg-elevated);
   color: var(--accent);
   font-weight: 600;
+}
+
+.segmented-pill {
+  position: absolute;
+  inset: 0;
+  background: var(--bg-elevated);
+  border-radius: 6px;
+  z-index: 0;
+}
+
+.segmented-btn-label {
+  position: relative;
+  z-index: 1;
 }
 
 /* Token auth */

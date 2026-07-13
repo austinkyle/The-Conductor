@@ -504,3 +504,25 @@ Why: neither test file previously drove a real cache hit/miss through `pipeline.
 Decision: bumped `next` from `^14.2.0` to `^15.5.16` (resolved `15.5.20` at install time).
 Rejected (in order tried): staying within 14.2.x (`14.2.35`, the newest release in that line); `npm audit fix --force`'s proposed jump to `next@16.2.10`.
 Why: every current advisory against Next.js — including one high-severity Pages Router/i18n middleware bypass — has a fixed range starting at `15.0.8` or later; `14.2.35` (already installed before this change, confirmed via `npm view next versions`) is still vulnerable to all of them. Staying in the 14.2.x line, as originally planned, would not have satisfied "npm audit clean of high-severity findings" at all — confirmed via `npm audit --json` before making any further change, then flagged to the user per the plan's explicit stop condition rather than silently jumping versions. The user chose 15.5.16 over the `audit fix --force` default of 16.2.10 as the minimal version that actually clears the audit. Result: 0 high/critical findings remain (one moderate, transitive `postcss` XSS bundled inside Next's own build tooling, with no fix short of downgrading Next itself). `npx tsc --noEmit` and `npm run build` both pass unmodified — no application code required changes for the major bump.
+
+## Phase 9 — Motion + live-system interactivity layer (2026-07-13)
+
+### `framer-motion@^11`, not `@12`, and imported as specific named imports only
+Decision: added `framer-motion` pinned to the `11.x` line (resolved `11.18.2`) for entrance choreography, the count-up numbers, the segmented-control pill, and the latency-bar draw-in. Every file imports only the specific exports it uses (`motion`, `useReducedMotion`, `AnimatePresence`) — no `import * as`.
+Rejected: `framer-motion@^12`.
+Why: `framer-motion@12` requires React 19; this dashboard is pinned to React 18.3 (`package.json`) and bumping React was out of scope for a motion layer. `11.x` is the newest line with full React 18 support. Specific named imports keep the bundler able to tree-shake unused motion features rather than pulling the whole library surface into the client bundle.
+
+### Latency card's p50/p95/p99 bars are hand-rolled `motion.div` width animations, not a `recharts` `BarChart`
+Decision: `LatencyCard.tsx` no longer renders a `recharts` `BarChart`; each percentile is a labeled track with a `motion.div` fill whose `width` animates from `0%` on mount, staggered 80ms per row — the spec's one designated "signature moment."
+Rejected: keeping `recharts` and driving the stagger through its `animationBegin`/`animationDuration` `Bar` props.
+Why: `recharts` animates all rects within a single `Bar` element together — there is no supported per-category-row animation delay when three percentiles share one categorical axis, short of rendering three separate `Bar` series (which changes the chart from three stacked rows to three grouped bars per row, a different layout than D1 shipped). The rest of the chart surface (`SpendChart`'s `AreaChart`) keeps `recharts` untouched, so this is a narrowly-scoped exception for the one place the brief called for effect that library couldn't produce, not a library swap.
+
+### Count-up animates once, on the page's first successful load, driven by a value captured before the "first load" ref flips
+Decision: `Home` (`app/page.tsx`) snapshots `isFirstLoadRef.current` into a local `wasFirstLoad` *before* the data-fetch promise resolves, and commits that snapshot into `isFirstLoad` state in the same `.then()` that sets `data` — the ref itself only flips to `false` in `.finally()`, after the state commit. `CountUp` receives `animate={isFirstLoad}` and only counts up from 0 when true; every subsequent 30s auto-refresh or time-window switch just snaps to the new value with a 200ms opacity fade (keyed off the formatted string, so a refresh that doesn't change the visible value doesn't flash).
+Rejected: a plain `useRef` read directly in the render for the `animate` prop.
+Why: React 18 batches the `setData` and a same-tick `setIsFirstLoad(false)` into one commit, so a naive version would render the *first* real data already with `isFirstLoad` false, and the count-up would never fire. Snapshotting the ref's value before the async work resolves, and only flipping the ref after the paired state commit, decouples "which load is this" from "what does this render see."
+
+### LIVE dot derives status from the dashboard's own read-API fetch, no new gateway endpoint
+Decision: the top-bar LIVE dot's live/unreachable state is set from the success/failure of the same `Promise.all` the page already issues against `/v1/observability/*` — no `/health` call was added.
+Rejected: a dedicated lightweight health-check endpoint on the gateway.
+Why: the brief explicitly rules out new gateway endpoints for this layer, and the six observability reads the dashboard already makes are a faithful proxy for "is the gateway's read path up" — a separate health check would answer a narrower question (is the process alive) while adding gateway surface area for no behavioral gain here.

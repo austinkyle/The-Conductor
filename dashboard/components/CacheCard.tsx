@@ -1,7 +1,9 @@
 import type { CacheStats } from "../lib/api";
+import CountUp from "./CountUp";
 
 interface Props {
   cache: CacheStats;
+  isFirstLoad?: boolean;
 }
 
 const ROWS: Array<[label: string, key: keyof CacheStats]> = [
@@ -14,15 +16,15 @@ const ROWS: Array<[label: string, key: keyof CacheStats]> = [
   ["Bypass — tool use", "tool_use"],
 ];
 
-export default function CacheCard({ cache }: Props) {
+export default function CacheCard({ cache, isFirstLoad = false }: Props) {
   const isZero = cache.total === 0;
-  const hitRate = (cache.hit_rate * 100).toFixed(1);
+  const hitRate = cache.hit_rate * 100;
 
   return (
-    <div className="card">
+    <div>
       <h2 className="card-label">Cache</h2>
       <div className={`metric-value${isZero ? " is-zero" : ""}`}>
-        {hitRate}
+        <CountUp value={hitRate} decimals={1} animate={isFirstLoad} />
         <span className="metric-accent">%</span>
       </div>
       <div className="metric-hint" style={{ marginBottom: isZero ? 0 : 16 }}>

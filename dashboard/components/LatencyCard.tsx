@@ -1,14 +1,6 @@
 "use client";
 
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  Cell,
-} from "recharts";
+import { motion, useReducedMotion } from "framer-motion";
 import type { LatencyStats } from "../lib/api";
 
 interface Props {
@@ -22,56 +14,43 @@ const ROWS = [
 ] as const;
 
 export default function LatencyCard({ latency }: Props) {
-  const data = ROWS.flatMap(({ pct, color }) => {
+  const reduceMotion = useReducedMotion();
+  const rows = ROWS.flatMap(({ pct, color }) => {
     const ms = latency[pct];
     return ms !== null ? [{ pct, ms, color }] : [];
   });
+  const max = Math.max(...rows.map((r) => r.ms), 1);
 
   return (
-    <div className="card">
+    <div>
       <h2 className="card-label">Latency (ms)</h2>
-      {data.length === 0 ? (
+      {rows.length === 0 ? (
         <div className="empty-state">
           <span className="status-dot" />
           No completed requests in this window
         </div>
       ) : (
-        <ResponsiveContainer width="100%" height={120}>
-          <BarChart data={data} layout="vertical">
-            <XAxis
-              type="number"
-              tick={{ fontSize: 11, fill: "var(--text-secondary)" }}
-              unit=" ms"
-              stroke="var(--border)"
-            />
-            <YAxis
-              type="category"
-              dataKey="pct"
-              tick={{ fontSize: 12, fill: "var(--text-secondary)" }}
-              width={28}
-              stroke="var(--border)"
-            />
-            <Tooltip
-              contentStyle={{
-                background: "var(--bg-surface)",
-                border: "1px solid var(--border)",
-                borderRadius: 6,
-                fontSize: 12,
-              }}
-              itemStyle={{
-                color: "var(--text-primary)",
-                fontFamily: "var(--font-mono)",
-              }}
-              labelStyle={{ color: "var(--text-secondary)" }}
-              formatter={(v) => [`${Number(v ?? 0).toFixed(0)} ms`, "Latency"]}
-            />
-            <Bar dataKey="ms" radius={[0, 4, 4, 0]}>
-              {data.map((r) => (
-                <Cell key={r.pct} fill={r.color} />
-              ))}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
+        <div className="latency-rows">
+          {rows.map((r, i) => (
+            <div className="latency-row" key={r.pct}>
+              <span className="latency-row-label">{r.pct}</span>
+              <div className="latency-row-track">
+                <motion.div
+                  className="latency-row-fill"
+                  style={{ background: r.color }}
+                  initial={{ width: reduceMotion ? `${(r.ms / max) * 100}%` : "0%" }}
+                  animate={{ width: `${(r.ms / max) * 100}%` }}
+                  transition={{
+                    duration: reduceMotion ? 0 : 0.5,
+                    delay: reduceMotion ? 0 : i * 0.08,
+                    ease: [0.22, 1, 0.36, 1],
+                  }}
+                />
+              </div>
+              <span className="latency-row-value">{r.ms.toFixed(0)} ms</span>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
