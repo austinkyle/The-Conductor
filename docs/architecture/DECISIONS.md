@@ -348,3 +348,47 @@ Validated on synthetic, hand-labeled pairs; real traffic may have a different do
 mix and adversarial density. `SEMANTIC_SIMILARITY_THRESHOLD` stays a per-deployment
 config value for this reason — re-run the sweep against real (anonymized) query
 pairs once available.
+
+---
+
+## Benchmark harness reproducibility fix (2026-07-13)
+
+### Problem
+The README's committed overhead/throughput numbers (2.3 ms p50 overhead, ~730 RPS
+peak) came from a single un-repeated run of `bench/overhead.py` /
+`bench/throughput.py`. An independent verification run reproduced 2-4x worse.
+Root cause was not gateway performance but the harness: no recorded run
+configuration (worker count, connection-pool limits, host specs), a thin warmup
+(10 requests), and a single sample with no variance reported — nothing distinguished
+a real regression from ordinary noise.
+
+### Decision
+Fixed the harness rather than re-tuning the gateway:
+- Warmup increased to 50 requests, run per-trial (not once for the whole script).
+- Every measurement now repeats 3 trials within a run, reporting mean + stdev.
+- Gateway worker count is pinned via `GATEWAY_WORKERS` (default 1, set in
+  `infra/docker-compose.yml` and read by `gateway/Dockerfile`'s uvicorn invocation)
+  instead of relying on uvicorn's undocumented default.
+- httpx connection-pool limits used by `throughput.py` are named constants, recorded
+  in the report instead of being an invisible implicit config.
+- `bench/_config.py` gathers host CPU/RAM/OS/package-version/trial-size info at
+  runtime and every report embeds it, so a report is self-documenting: a reader
+  doesn't need this file open to know what conditions produced a number.
+- `bench/README.md` added as the reproduction one-pager (exact commands, what
+  "reproducible" means here, known sources of variance on a dev laptop).
+
+Verified: 3 consecutive full runs each of `overhead.py` and `throughput.py` on the
+same dev laptop, mean p50 overhead 3.41 / 3.44 / 3.89 ms (14% spread) and peak RPS
+601 / 666 / 634 (11% spread) — both within the ~15% reproducibility bar. Reports in
+`bench/reports/bench-20260713-*-overhead.md` and `-throughput.md`.
+
+### Rejected
+Tuning the gateway itself to produce better-looking numbers — out of scope for a
+measurement-fidelity fix, and would have hidden the real question (was the harness
+trustworthy?) behind a coincidentally-nicer number.
+
+### Limitation
+These are dev-laptop numbers, not the deployed reference instance. The main README
+carries an explicit interim note; FINAL numbers are still pending a re-measurement
+on the deployed Fly instance, which removes dev-laptop background-load noise as a
+variance source.

@@ -38,6 +38,8 @@ services:
       FALLBACK_BACKOFF_BASE_MS: ${FALLBACK_BACKOFF_BASE_MS:-500}
       # Dummy key for local mock providers used by bench scripts — never a real secret.
       BENCH_MOCK_KEY: bench-dummy-000
+      # Pinned so benchmark runs are reproducible across machines (see bench/README.md).
+      GATEWAY_WORKERS: ${GATEWAY_WORKERS:-1}
     ports:
       - "8000:8000"
     depends_on:

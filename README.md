@@ -68,24 +68,33 @@ These are the four decisions that shaped the design. Each one had a real alterna
 
 **Rejected:** Go or Rust for "infrastructure credibility."
 
-**Why:** A clean, well-tested async implementation in the operated stack beats shaky code in a language the team does not operate. Gateway overhead measured at 2.3 ms p50 — well within bounds for a proxy. The hot path can be ported to Go later as a victory lap, not the build.
+**Why:** A clean, well-tested async implementation in the operated stack beats shaky code in a language the team does not operate. Gateway overhead is low single-digit milliseconds p50 — well within bounds for a proxy — see [Benchmark Results](#benchmark-results) for the current, reproducible figure. The hot path can be ported to Go later as a victory lap, not the build.
 
 ---
 
 ## Benchmark Results
 
-All numbers from `bench/reports/` — run against a local mock provider on loopback, single uvicorn worker.
+> **Interim note:** the numbers below are from a fixed, reproducible harness
+> (warmup, pinned worker/connection config, 3 trials/run, 3 independent runs
+> agreeing within ~15% — see `bench/README.md`) run on a **dev laptop**, not
+> the deployed reference instance. The previous numbers in this table (2.3 ms
+> p50 overhead, ~730 RPS peak) came from a single un-repeated run and did not
+> reproduce — an independent re-run came out 2-4x worse — so they have been
+> retracted. FINAL numbers will be re-measured on the deployed Fly instance
+> and will replace these.
+
+All numbers from `bench/reports/` — run against a local mock provider on loopback, single uvicorn worker (pinned via `GATEWAY_WORKERS`). Each is the mean across 3 independent full harness runs (3 trials each); see the linked reports for per-run and per-trial spread.
 
 | Benchmark | Result |
 |---|---|
-| Overhead p50 | 2.3 ms added over direct provider call |
-| Overhead p95 | 2.8 ms added |
-| Overhead p99 | 3.1 ms added |
+| Overhead p50 | ~3.6 ms added over direct provider call (3 runs: 3.41 / 3.44 / 3.89 ms) |
+| Overhead p95 | ~8.0 ms added |
+| Overhead p99 | ~12.0 ms added |
 | Cache hit rate | 25.0% (50/200 exact hits under bench corpus) |
 | Failover success rate | 100% (200/200 when primary returns 503) |
-| Throughput peak | ~730 RPS (single worker, saturation at ~5 concurrent) |
+| Throughput peak | ~634 RPS mean (3 runs: 601 / 666 / 634 RPS), single worker, saturation at ~10 concurrent |
 
-**Methodology:** Direct p50 = 0.6 ms (loopback mock). Cache bypassed for overhead and throughput benches (`cache: {no_cache: true}`). `FALLBACK_BACKOFF_BASE_MS=0` for failover timing. Semantic cache skipped in bench run (no live `OPENAI_API_KEY`); exact-cache hit rate reflects the 50-question paraphrase corpus with identical repeats.
+**Methodology:** Cache bypassed for overhead and throughput benches (`cache: {no_cache: true}`). `FALLBACK_BACKOFF_BASE_MS=0` for failover timing. Semantic cache skipped in bench run (no live `OPENAI_API_KEY`); exact-cache hit rate reflects the 50-question paraphrase corpus with identical repeats.
 
 ---
 

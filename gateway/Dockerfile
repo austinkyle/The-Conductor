@@ -11,4 +11,6 @@ RUN pip install --no-cache-dir .
 EXPOSE 8000
 
 # Apply migrations, then serve. Compose gates this on DB+Redis being healthy.
-CMD ["sh", "-c", "python -m db.migrate && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+# Worker count is pinned (not left to uvicorn's default) so benchmark runs are
+# reproducible across machines; override via GATEWAY_WORKERS if needed.
+CMD ["sh", "-c", "python -m db.migrate && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${GATEWAY_WORKERS:-1}"]
