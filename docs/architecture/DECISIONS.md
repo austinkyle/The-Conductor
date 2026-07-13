@@ -43,6 +43,11 @@ Decision: filter `body` through the existing `cache.exact._VOLATILE_KEYS` set (`
 Rejected: leaving the OpenAI adapter's pass-through as the only line of defense.
 Why: `_candidate_setup` built `out_body` via `{**body, "model": ...}`, forwarding the gateway-only `cache` control field verbatim to real providers (BLOCKER 3.5). The OpenAI adapter's `to_provider_request` is a pure identity pass-through, so this leaked as an unrecognized field on the wire; Anthropic's adapter happened to mask it by rebuilding the request field-by-field. Fixing the shared `_candidate_setup` choke point (used by both streaming and non-streaming attempts) closes the leak for both adapters rather than relying on one adapter's incidental behavior. Confirmed safe to also strip `stream`/`stream_options` here since `to_provider_stream_request` re-sets both unconditionally.
 
+## ADR-008 — retired Anthropic seed models updated via a new migration, not an edit
+Decision: `002_seed_providers.sql` / `003_routes.sql` seeded `claude-3-5-sonnet-latest` and `claude-3-5-haiku-latest`. Both are retired and 404 against the live Anthropic API. Added `008_update_anthropic_models.sql`, an `UPDATE` migration that repoints the existing rows' `alias`/`provider_model` to `claude-sonnet-5` and `claude-haiku-4-5-20251001` with current per-mtok pricing.
+Rejected: editing 002/003 in place.
+Why: applied migrations are immutable (db/CLAUDE.md) — history has to show what was actually seeded and when it was corrected. An `UPDATE` migration keeps that audit trail and is the same pattern 007 used for the `request_hash` index fix.
+
 ---
 
 ## Phase 0 — skeleton (config, 5-table model, migrations, compose)

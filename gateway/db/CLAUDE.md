@@ -31,3 +31,6 @@ Secrets are referenced (auth_ref / env), never stored in plaintext.
 
 ## Post-launch fix (007_semantic_cache_unique_hash)
 - 004's `request_hash` index was a plain btree, which does NOT satisfy `ON CONFLICT (request_hash) DO NOTHING` in `store()` — Postgres requires a unique index/constraint on the conflict target. 007 replaces it with a `UNIQUE INDEX` (de-duping existing rows first). See ADR-006.
+
+## Post-launch fix (008_update_anthropic_models)
+- 002/003 seeded `claude-3-5-sonnet-latest` / `claude-3-5-haiku-latest`, both retired and 404 live against the real Anthropic API. 008 updates those rows in place to `claude-sonnet-5` and `claude-haiku-4-5-20251001` with current pricing, rather than editing 002/003.
