@@ -1,4 +1,4 @@
-app = "llm-gateway-demo"
+app = "conductor-demo"
 primary_region = "sjc"
 
 [build]

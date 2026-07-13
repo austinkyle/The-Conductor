@@ -1,4 +1,4 @@
-# LLM Gateway — Project Map (root CLAUDE.md)
+# The Conductor — Project Map (root CLAUDE.md)
 
 > Behavioral contract for Claude Code, not documentation. Keep this file lean:
 > it loads every session, and files >200 lines reduce instruction adherence.

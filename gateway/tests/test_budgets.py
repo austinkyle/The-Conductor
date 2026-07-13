@@ -191,7 +191,7 @@ async def test_anonymous_request_served_no_enforcement() -> None:
         return httpx.Response(200, json=_OPENAI_UPSTREAM)
 
     async def fake_resolve_chain(conn: object, model: str) -> list[tuple[Model, Provider]]:
-        provider = Provider(1, "openai", "https://api.openai.com/v1", "OPENAI_API_KEY", _NOW)
+        provider = Provider(1, "openai", "https://api.openai.com/v1", "OPENAI_API_KEY", "openai", _NOW)
         m = Model(1, model, 1, model, Decimal("0.15"), Decimal("0.60"), _NOW)
         return [(m, provider)]
 

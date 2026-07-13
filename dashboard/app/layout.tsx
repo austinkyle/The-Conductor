@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "LLM Gateway — Observability",
+  title: "The Conductor — Observability",
 };
 
 export default function RootLayout({

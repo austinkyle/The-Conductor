@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await app.state.http.aclose()
 
 
-app = FastAPI(title="LLM Gateway", lifespan=lifespan)
+app = FastAPI(title="The Conductor", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

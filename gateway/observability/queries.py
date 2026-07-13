@@ -29,21 +29,23 @@ async def spend(
     bucket: str,
 ) -> list[asyncpg.Record]:
     assert bucket in _BUCKETS
+    interval = _interval(window)
     sql = f"""
         SELECT
             date_trunc('{bucket}', created_at) AS ts,
             COALESCE(SUM(cost_cents), 0)        AS cost_cents
         FROM requests
-        WHERE created_at >= NOW() - $1::interval
+        WHERE created_at >= NOW() - INTERVAL '{interval}'
         GROUP BY 1
         ORDER BY 1
     """
-    return list(await conn.fetch(sql, _interval(window)))
+    return list(await conn.fetch(sql))
 
 
 async def cache_stats(conn: asyncpg.Connection, window: str) -> asyncpg.Record:
+    interval = _interval(window)
     row = await conn.fetchrow(
-        """
+        f"""
         SELECT
             COUNT(*)                                                                   AS total,
             COUNT(*) FILTER (WHERE cache_status = 'exact_hit')                        AS exact_hit,
@@ -51,26 +53,25 @@ async def cache_stats(conn: asyncpg.Connection, window: str) -> asyncpg.Record:
             COUNT(*) FILTER (WHERE cache_status NOT IN ('exact_hit', 'semantic_hit')
                                 OR cache_status IS NULL)                               AS miss
         FROM requests
-        WHERE created_at >= NOW() - $1::interval
-        """,
-        _interval(window),
+        WHERE created_at >= NOW() - INTERVAL '{interval}'
+        """
     )
     assert row is not None
     return row
 
 
 async def latency_stats(conn: asyncpg.Connection, window: str) -> asyncpg.Record:
+    interval = _interval(window)
     row = await conn.fetchrow(
-        """
+        f"""
         SELECT
             percentile_cont(0.50) WITHIN GROUP (ORDER BY latency_ms) AS p50,
             percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms) AS p95,
             percentile_cont(0.99) WITHIN GROUP (ORDER BY latency_ms) AS p99
         FROM requests
-        WHERE created_at >= NOW() - $1::interval
+        WHERE created_at >= NOW() - INTERVAL '{interval}'
           AND latency_ms IS NOT NULL
-        """,
-        _interval(window),
+        """
     )
     assert row is not None
     return row
@@ -78,8 +79,9 @@ async def latency_stats(conn: asyncpg.Connection, window: str) -> asyncpg.Record
 
 async def savings(conn: asyncpg.Connection, window: str) -> asyncpg.Record:
     """Would-be cost for cache-hit rows (token counts × cheapest model price)."""
+    interval = _interval(window)
     row = await conn.fetchrow(
-        """
+        f"""
         WITH cheapest AS (
             SELECT DISTINCT ON (alias)
                 alias,
@@ -95,37 +97,37 @@ async def savings(conn: asyncpg.Connection, window: str) -> asyncpg.Record:
         ), 0) AS cost_saved_cents
         FROM requests r
         LEFT JOIN cheapest m ON m.alias = r.requested_model
-        WHERE r.created_at >= NOW() - $1::interval
+        WHERE r.created_at >= NOW() - INTERVAL '{interval}'
           AND r.cache_status IN ('exact_hit', 'semantic_hit')
           AND r.prompt_tokens     IS NOT NULL
           AND r.completion_tokens IS NOT NULL
-        """,
-        _interval(window),
+        """
     )
     assert row is not None
     return row
 
 
 async def failovers(conn: asyncpg.Connection, window: str) -> list[asyncpg.Record]:
+    interval = _interval(window)
     return list(
         await conn.fetch(
-            """
+            f"""
             SELECT created_at AS ts, requested_model, served_model, fallback_depth
             FROM requests
-            WHERE created_at >= NOW() - $1::interval
+            WHERE created_at >= NOW() - INTERVAL '{interval}'
               AND fallback_depth > 0
             ORDER BY created_at DESC
             LIMIT 200
-            """,
-            _interval(window),
+            """
         )
     )
 
 
 async def key_usage(conn: asyncpg.Connection, window: str) -> list[asyncpg.Record]:
+    interval = _interval(window)
     return list(
         await conn.fetch(
-            """
+            f"""
             SELECT
                 ak.name,
                 COUNT(*)                            AS requests,
@@ -133,10 +135,9 @@ async def key_usage(conn: asyncpg.Connection, window: str) -> list[asyncpg.Recor
                 COALESCE(SUM(r.cost_cents),    0)   AS cost_cents
             FROM requests r
             JOIN api_keys ak ON ak.id = r.api_key_id
-            WHERE r.created_at >= NOW() - $1::interval
+            WHERE r.created_at >= NOW() - INTERVAL '{interval}'
             GROUP BY ak.id, ak.name
             ORDER BY SUM(r.cost_cents) DESC NULLS LAST
-            """,
-            _interval(window),
+            """
         )
     )

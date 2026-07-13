@@ -136,10 +136,10 @@ def _sse_bytes_anthropic() -> bytes:
 
 def _resolve(model: str) -> tuple[Model, Provider]:
     if model == "gpt-4o-mini":
-        provider = Provider(1, "openai", "https://api.openai.com/v1", "OPENAI_API_KEY", _NOW)
+        provider = Provider(1, "openai", "https://api.openai.com/v1", "OPENAI_API_KEY", "openai", _NOW)
         m = Model(1, model, 1, model, Decimal("0.15"), Decimal("0.60"), _NOW)
     else:
-        provider = Provider(2, "anthropic", "https://api.anthropic.com/v1", "ANTHROPIC_API_KEY", _NOW)
+        provider = Provider(2, "anthropic", "https://api.anthropic.com/v1", "ANTHROPIC_API_KEY", "anthropic", _NOW)
         m = Model(2, model, 2, model, Decimal("3"), Decimal("15"), _NOW)
     return m, provider
 

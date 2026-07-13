@@ -157,6 +157,24 @@ def test_temperature_checked_before_tool_choice() -> None:
     assert should_bypass(body) == "temperature"
 
 
+def test_no_bypass_cache_no_cache_false() -> None:
+    # cache: {no_cache: False} is falsy — should NOT trigger bypass
+    body: JSON = {"model": "gpt-4", "cache": {"no_cache": False}, "messages": []}
+    assert should_bypass(body) is None
+
+
+def test_no_bypass_cache_unrelated_key() -> None:
+    # cache: {ttl: 60} has no recognized bypass key
+    body: JSON = {"model": "gpt-4", "cache": {"ttl": 60}, "messages": []}
+    assert should_bypass(body) is None
+
+
+def test_bypass_tool_choice_empty_dict() -> None:
+    # tool_choice: {} is isinstance(dict) — triggers bypass regardless of contents
+    body: JSON = {"model": "gpt-4", "tool_choice": {}, "messages": []}
+    assert should_bypass(body) == "tool_use"
+
+
 # ---------------------------------------------------------------------------
 # exact cache
 # ---------------------------------------------------------------------------

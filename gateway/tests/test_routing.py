@@ -8,6 +8,7 @@ Three layers:
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import cast
@@ -21,6 +22,7 @@ from core.config import get_settings
 from db.models import Model, Provider
 from routing import errors
 from routing.errors import ProviderError
+from routing.fallback import Attempt, walk_chain
 from translation.base import JSON
 
 _NOW = datetime.now(timezone.utc)
@@ -28,8 +30,8 @@ _NOW = datetime.now(timezone.utc)
 
 def _provider(pid: int, name: str) -> Provider:
     if name == "openai":
-        return Provider(pid, "openai", "https://api.openai.com/v1", "OPENAI_API_KEY", _NOW)
-    return Provider(pid, "anthropic", "https://api.anthropic.com/v1", "ANTHROPIC_API_KEY", _NOW)
+        return Provider(pid, "openai", "https://api.openai.com/v1", "OPENAI_API_KEY", "openai", _NOW)
+    return Provider(pid, "anthropic", "https://api.anthropic.com/v1", "ANTHROPIC_API_KEY", "anthropic", _NOW)
 
 
 def _model(mid: int, pid: int, provider_model: str) -> Model:
@@ -198,3 +200,86 @@ async def test_terminal_error_does_not_cascade(monkeypatch: pytest.MonkeyPatch) 
     assert row["status"] == "error"
     assert row["error_class"] == "client_error"
     assert row["fallback_depth"] == 0
+
+
+# ---------------------------------------------------------------------------
+# walk_chain direct tests (pure — no HTTP, no DB)
+# ---------------------------------------------------------------------------
+
+
+async def test_all_candidates_exhausted_raises_last_error() -> None:
+    chain = _two_provider_chain()
+
+    async def always_fail(a: Attempt) -> JSON:
+        raise ProviderError(
+            label="server_error",
+            retryable=True,
+            status=503,
+            detail="service unavailable",
+            depth=a.depth,
+            provider_id=a.provider.id,
+            served_model=a.model.provider_model,
+        )
+
+    with pytest.raises(ProviderError) as exc_info:
+        await walk_chain(chain, always_fail, backoff=lambda d: 0.0)
+
+    # The error raised is the one from the last candidate (depth=1).
+    assert exc_info.value.depth == 1
+
+
+async def test_backoff_called_between_retryable_candidates(monkeypatch: pytest.MonkeyPatch) -> None:
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+    chain = _two_provider_chain()
+
+    async def fail_then_succeed(a: Attempt) -> JSON:
+        if a.depth == 0:
+            raise ProviderError(
+                label="server_error",
+                retryable=True,
+                status=503,
+                detail="service unavailable",
+                depth=a.depth,
+                provider_id=a.provider.id,
+                served_model=a.model.provider_model,
+            )
+        return _OPENAI_RESPONSE
+
+    result, won = await walk_chain(chain, fail_then_succeed, backoff=lambda d: 0.25)
+
+    assert result == _OPENAI_RESPONSE
+    assert won.depth == 1
+    assert sleep_calls == [0.25]
+
+
+async def test_single_candidate_no_sleep_on_retryable_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+    chain = [_two_provider_chain()[0]]
+
+    async def always_fail(a: Attempt) -> JSON:
+        raise ProviderError(
+            label="server_error",
+            retryable=True,
+            status=503,
+            detail="service unavailable",
+            depth=a.depth,
+            provider_id=a.provider.id,
+            served_model=a.model.provider_model,
+        )
+
+    with pytest.raises(ProviderError):
+        await walk_chain(chain, always_fail, backoff=lambda d: 5.0)
+
+    assert sleep_calls == []
