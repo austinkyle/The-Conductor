@@ -500,7 +500,7 @@ Decision: added cache-integration tests (exact hit, semantic hit, true miss, and
 Rejected: refactoring first and writing tests against the new shape.
 Why: neither test file previously drove a real cache hit/miss through `pipeline.py` — an autouse fixture forced a blanket bypass in both files. Without tests exercising the actual duplicated logic, the refactor would have had no way to prove behavior was preserved rather than just superficially preserved.
 
-### Next.js patched within the 14.x line, not the `npm audit fix --force` major bump
-Decision: bumped `next` from `^14.2.0` to `^14.2.35` (current patched release in the 14.2.x line).
-Rejected: `npm audit fix --force`'s proposed jump to `next@16.2.10`.
-Why: task scope was a security patch, not a major-version migration; a two-major-version jump carries breaking-change risk disproportionate to closing an audit finding.
+### Next.js bumped to the 15.x line, not the 14.2.x patch or the `npm audit fix --force` jump to 16.x
+Decision: bumped `next` from `^14.2.0` to `^15.5.16` (resolved `15.5.20` at install time).
+Rejected (in order tried): staying within 14.2.x (`14.2.35`, the newest release in that line); `npm audit fix --force`'s proposed jump to `next@16.2.10`.
+Why: every current advisory against Next.js — including one high-severity Pages Router/i18n middleware bypass — has a fixed range starting at `15.0.8` or later; `14.2.35` (already installed before this change, confirmed via `npm view next versions`) is still vulnerable to all of them. Staying in the 14.2.x line, as originally planned, would not have satisfied "npm audit clean of high-severity findings" at all — confirmed via `npm audit --json` before making any further change, then flagged to the user per the plan's explicit stop condition rather than silently jumping versions. The user chose 15.5.16 over the `audit fix --force` default of 16.2.10 as the minimal version that actually clears the audit. Result: 0 high/critical findings remain (one moderate, transitive `postcss` XSS bundled inside Next's own build tooling, with no fix short of downgrading Next itself). `npx tsc --noEmit` and `npm run build` both pass unmodified — no application code required changes for the major bump.
