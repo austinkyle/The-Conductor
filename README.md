@@ -206,6 +206,11 @@ See [gateway/DEPLOY.md](gateway/DEPLOY.md) for the Fly.io runbook if you want to
 deploy your own instance instead, or the **Self-Host** command above for a fully
 local instance with no shared budget.
 
+The observability dashboard for this instance is live at
+**https://dashboard-phi-ochre-21.vercel.app**. It's read-only and asks for a
+bearer token before showing any data — the deployed build doesn't ship one, so
+without the token you'll just see the token-entry screen.
+
 ---
 
 ## Security
