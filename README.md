@@ -185,9 +185,14 @@ See [gateway/DEPLOY.md](gateway/DEPLOY.md) for the Fly.io runbook.
 
 ## Live Demo
 
-A real instance is running at **https://conductor-demo.fly.dev**, backed by Neon
-(Postgres + pgvector) and Upstash (Redis), talking to real OpenAI and Anthropic
-accounts.
+**Dashboard: https://dashboard-phi-ochre-21.vercel.app** — read-only, asks for a
+bearer token before showing any data (the deployed build doesn't ship one, so
+without the token you'll just see the token-entry screen).
+
+The gateway backing it is a real instance running at
+**https://conductor-demo.fly.dev**, backed by Neon (Postgres + pgvector) and
+Upstash (Redis), talking to real OpenAI and Anthropic accounts. Call it
+directly with the OpenAI SDK:
 
 ```python
 import openai
@@ -205,11 +210,6 @@ budget left if a lot of people have used it since this was written.
 See [gateway/DEPLOY.md](gateway/DEPLOY.md) for the Fly.io runbook if you want to
 deploy your own instance instead, or the **Self-Host** command above for a fully
 local instance with no shared budget.
-
-The observability dashboard for this instance is live at
-**https://dashboard-phi-ochre-21.vercel.app**. It's read-only and asks for a
-bearer token before showing any data — the deployed build doesn't ship one, so
-without the token you'll just see the token-entry screen.
 
 ---
 
