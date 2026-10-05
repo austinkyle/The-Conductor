@@ -1,5 +1,9 @@
 # The Conductor
 
+**Portfolio scope:** an implemented gateway with historical local and deployed-reference benchmarks. The deployed benchmarks use mock providers and are not customer traffic or business ROI. Live demo availability and enterprise production readiness are separate from those historical results.
+
+**[FDE case study](FDE-CASE-STUDY.md)** — software/AI/human routing, cost/reliability tradeoffs, known correctness gaps, and a business-acceptance plan.
+
 The Conductor is an OpenAI-compatible transparent proxy that adds a two-layer cache, multi-provider failover, per-key budget enforcement, and a live observability dashboard to any stack already calling the OpenAI API.
 
 ```mermaid
@@ -75,7 +79,7 @@ These are the four decisions that shaped the design. Each one had a real alterna
 
 **Rejected:** A standalone vector database (Pinecone, Qdrant, Weaviate).
 
-**Why:** One fewer piece of infrastructure. Postgres is already in the stack for the request log; gateway-cache scale does not need a specialized store. The HNSW cosine index in pgvector is fast enough for the access pattern (single ANN lookup per request, sub-millisecond on a warm index). Fewer moving parts beat marginal index-query performance at this scale.
+**Why:** One fewer piece of infrastructure. Postgres is already in the stack for the request log; gateway-cache scale does not need a specialized store. The HNSW cosine index keeps semantic lookup in the existing database. End-to-end latency depends on deployment topology; see the measured benchmark environments below. Fewer moving parts beat marginal index-query performance at this scale.
 
 ---
 
@@ -85,7 +89,7 @@ These are the four decisions that shaped the design. Each one had a real alterna
 
 **Rejected:** Go or Rust for "infrastructure credibility."
 
-**Why:** A clean, well-tested async implementation in the operated stack beats shaky code in a language the team does not operate. Gateway overhead is low single-digit milliseconds p50 — well within bounds for a proxy — see [Benchmark Results](#benchmark-results) for the current, reproducible figure. The hot path can be ported to Go later as a victory lap, not the build.
+**Why:** A clean, well-tested async implementation in the operated stack beats shaky code in a language the team does not operate. The first local benchmark measured about 3.6 ms p50 added overhead; the authenticated deployed-reference run measured 483.3 ms p50. See [Benchmark Results](#benchmark-results) for the historical environments and tradeoff; the local figure is not the deployed result. The hot path can be ported to Go later as a victory lap, not the build.
 
 ---
 
@@ -183,13 +187,13 @@ See [gateway/DEPLOY.md](gateway/DEPLOY.md) for the Fly.io runbook.
 
 ---
 
-## Live Demo
+## Historical deployment references
 
 **Dashboard: https://dashboard-phi-ochre-21.vercel.app** — read-only, asks for a
 bearer token before showing any data (the deployed build doesn't ship one, so
 without the token you'll just see the token-entry screen).
 
-The gateway backing it is a real instance running at
+The historical gateway reference is
 **https://conductor-demo.fly.dev**, backed by Neon (Postgres + pgvector) and
 Upstash (Redis), talking to real OpenAI and Anthropic accounts. Call it
 directly with the OpenAI SDK:
@@ -201,9 +205,11 @@ print(client.chat.completions.create(model="fast", messages=[{"role":"user","con
 ```
 
 `demo-key` is a real, shared API key — not a rate-limited afterthought. It is
-**hard-capped at $10/month by the gateway's own budget enforcement**
-(`gateway/budgets/enforce.py`): once spend crosses the cap, requests are rejected
-with a 402 regardless of who's calling. The cap resets monthly. Use it to try
+**configured with a $10/month budget threshold**
+(`gateway/budgets/enforce.py`): requests are checked against recorded spend and rejected
+with a 402 once that spend reaches the threshold. Checks occur before forwarding and
+accounting afterward, so in-flight/concurrent requests can overshoot; this is not an
+atomic reservation or a strict prepaid spending guarantee. The cap resets monthly. Use it to try
 streaming, caching, and failover for yourself; don't expect it to still have
 budget left if a lot of people have used it since this was written.
 
@@ -236,4 +242,4 @@ gateway and dashboard so the bearer tokens never travel in the clear.
 
 **User accounts, sessions, RBAC** — the static per-key and dashboard-token auth above stop anonymous read/write access but stop there. Multi-user accounts, session management, and role-based access control are enterprise-tier work, not this project's scope.
 
-**Horizontal scale** — Redis spend counters use `INCRBYFLOAT` (atomic); asyncpg connections are per-process. Multiple workers or machines work correctly but are not load-tested.
+**Horizontal scale** — Redis spend counters use `INCRBYFLOAT` (atomic); asyncpg connections are per-process. Multiple workers or machines are not acceptance-tested. Atomic counter increments do not make the separate pre-request check and post-request accounting an atomic budget reservation.
